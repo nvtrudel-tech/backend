@@ -49,6 +49,7 @@ target 'Connexions' do
     :privacy_file_aggregation_enabled => podfile_properties['apple.privacyManifestAggregationEnabled'] != 'false',
   )
 
+  # This is the single, merged post_install block
   post_install do |installer|
     react_native_post_install(
       installer,
@@ -56,16 +57,15 @@ target 'Connexions' do
       :mac_catalyst_enabled => false,
       :ccache_enabled => ccache_enabled?(podfile_properties),
     )
-  end
-end
-# Start of Folly fix
-post_install do |installer|
-  installer.pods_project.targets.each do |target|
-    target.build_configurations.each do |config|
-      config.build_settings['OTHER_CPLUSPLUSFLAGS'] ||= ['$(inherited)']
-      config.build_settings['OTHER_CPLUSPLUSFLAGS'] << '-DFOLLY_CFG_NO_COROUTINES=1'
-      config.build_settings['OTHER_CPLUSPLUSFLAGS'] << '-DFOLLY_HAVE_CLOCK_GETTIME=1'
+    
+    # Start of Folly fix
+    installer.pods_project.targets.each do |target|
+      target.build_configurations.each do |config|
+        config.build_settings['OTHER_CPLUSPLUSFLAGS'] ||= ['$(inherited)']
+        config.build_settings['OTHER_CPLUSPLUSFLAGS'] << '-DFOLLY_CFG_NO_COROUTINES=1'
+        config.build_settings['OTHER_CPLUSPLUSFLAGS'] << '-DFOLLY_HAVE_CLOCK_GETTIME=1'
+      end
     end
+    # End of Folly fix
   end
 end
-# End of Folly fix
