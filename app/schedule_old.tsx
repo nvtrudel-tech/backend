@@ -1,246 +1,225 @@
-// app/schedule.tsx
-import { useRouter } from "expo-router";
-import React, { useState } from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   Alert,
-  Button,
-  Image,
-  Linking,
+  SafeAreaView,
   ScrollView,
+  StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View
 } from "react-native";
+import ThemeToggle from "./components/ThemeToggle";
+import { useTheme } from "./context/ThemeContext";
 
-const workers = [
-  {
-    id: "1",
-    name: "John Doe",
-    image: require("../assets/worker1.png"),
-    availableTimes: ["9:00 AM", "10:00 AM", "11:00 AM", "2:00 PM"],
-  },
-  {
-    id: "2",
-    name: "Jane Smith",
-    image: require("../assets/worker2.png"),
-    availableTimes: ["10:00 AM", "1:00 PM", "3:00 PM"],
-  },
-  {
-    id: "3",
-    name: "Mike Johnson",
-    image: require("../assets/worker3.png"),
-    availableTimes: [
-      "9:00 AM",
-      "9:30 AM",
-      "10:00 AM",
-      "11:00 AM",
-      "12:00 PM",
-      "2:00 PM",
-      "4:00 PM",
-    ],
-  },
-  {
-    id: "4",
-    name: "Sarah Lee",
-    image: require("../assets/worker4.png"),
-    availableTimes: ["10:00 AM", "11:00 AM", "1:30 PM", "3:30 PM"],
-  },
-];
+// Define the API URL for your backend
+const API_URL = "http://172.20.10.14:6000/api";
 
-const ScheduleView = () => {
+export default function ScheduleScreen() {
   const router = useRouter();
-  const [selectedDate, setSelectedDate] = useState(new Date());
-  const [selectedTime, setSelectedTime] = useState<string | null>(null);
-  const [selectedWorker, setSelectedWorker] = useState<any>(null);
-  const [showForm, setShowForm] = useState(false);
-  const [name, setName] = useState("");
-  const [address, setAddress] = useState("");
-  const [phone, setPhone] = useState("");
+  const { colors } = useTheme();
+  const params = useLocalSearchParams();
+  const { selectedDate } = params;
 
-  const allTimes = Array.from(
-    new Set(workers.flatMap((w) => w.availableTimes))
-  ).sort((a, b) => {
-    const parseTime = (t: string) =>
-      new Date(
-        `1970-01-01T${t.replace(/(\d+):(\d+) (AM|PM)/, (_, h, m, ampm) => {
-          h = parseInt(h);
-          if (ampm === "PM" && h !== 12) h += 12;
-          if (ampm === "AM" && h === 12) h = 0;
-          return `${h.toString().padStart(2, "0")}:${m}`;
-        })}:00Z`
+  const [selectedService, setSelectedService] = useState<string | null>(null);
+  const [workers, setWorkers] = useState<any[]>([]);
+  const [selectedWorker, setSelectedWorker] = useState<any | null>(null);
+  const [customerId, setCustomerId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  // Hardcoded services list, same as the one in the worker dashboard
+  const serviceCategories = [
+    "Electrician", "Plumber", "Drywall", "Carpenter", 
+    "Roofer", "Fire/Alarm", "Home Automation", "HVAC", 
+    "Painter", "Heavy Equipment"
+  ];
+
+  const fetchWorkers = useCallback(async () => {
+    try {
+      // NOTE: This assumes you have an endpoint to get all users, which we filter by role.
+      // You may need to create a dedicated endpoint like GET /api/workers
+      const response = await fetch(`${API_URL}/users`);
+      if (!response.ok) throw new Error("Failed to fetch workers");
+      
+      const allUsers = await response.json();
+      const availableWorkers = allUsers.filter(
+        (user: any) => user.role === 'worker' || user.role === 'specialist'
       );
-    return parseTime(a).getTime() - parseTime(b).getTime();
-  });
+      setWorkers(availableWorkers);
+    } catch (error) {
+      console.error("Fetch workers error:", error);
+      Alert.alert("Error", "Could not load available specialists.");
+    }
+  }, []);
 
-  const filteredWorkers = workers.filter(
-    (w) => selectedTime && w.availableTimes.includes(selectedTime)
-  );
+  useEffect(() => {
+    const initialize = async () => {
+      const userString = await AsyncStorage.getItem("user");
+      if (userString) {
+        setCustomerId(JSON.parse(userString)._id);
+      }
+      fetchWorkers();
+    };
+    initialize();
+  }, [fetchWorkers]);
 
-  const handleConfirm = () => {
-    setShowForm(true);
-  };
+  const handleBookAppointment = async () => {
+    if (!selectedService || !selectedWorker || !customerId || !selectedDate) {
+      Alert.alert("Incomplete Information", "Please select a service and a specialist.");
+      return;
+    }
+    setLoading(true);
+    try {
+      const appointmentData = {
+        customer: customerId,
+        worker: selectedWorker._id,
+        service: selectedService,
+        date: selectedDate,
+      };
 
-  const handleSave = () => {
-    setShowForm(false);
-    Alert.alert(
-      "Appointment Confirmed",
-      `Your appointment is set for ${selectedDate.toDateString()} at ${selectedTime} with ${
-        selectedWorker.name
-      }.\n\nName: ${name}\nAddress: ${address}\nPhone: ${phone}`,
-      [
-        { text: "Call Now", onPress: () => Linking.openURL(`tel:${phone}`) },
-        { text: "OK", style: "cancel" },
-      ]
-    );
+      const response = await fetch(`${API_URL}/appointments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(appointmentData),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.msg || "Failed to create appointment");
+      }
+      
+      Alert.alert("Success!", "Your appointment has been booked.");
+      router.replace("/"); // Navigate back to home screen on success
+
+    } catch (error: any) {
+      console.error("Booking error:", error);
+      Alert.alert("Booking Failed", error.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
-    <View style={{ flex: 1, padding: 16, backgroundColor: "#fff" }}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Text style={styles.backButton}>{"<"} </Text>
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Schedule Appointment</Text>
-        <View style={{ width: 24 }} /> {/* Spacer for symmetry */}
-      </View>
-      <Text style={{ fontSize: 16, color: "gray" }}>
-        Selected Date: {selectedDate.toDateString()}
-      </Text>
-
-      <Text style={{ fontSize: 16, marginTop: 16 }}>Select a Time Slot</Text>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={{ marginVertical: 10 }}
-      >
-        {allTimes.map((time) => (
-          <TouchableOpacity
-            key={time}
-            onPress={() => {
-              setSelectedTime(time);
-              setSelectedWorker(null);
-            }}
-            style={{
-              backgroundColor: selectedTime === time ? "blue" : "#f0f0f0",
-              padding: 10,
-              borderRadius: 8,
-              marginRight: 8,
-            }}
-          >
-            <Text style={{ color: selectedTime === time ? "white" : "black" }}>
-              {time}
-            </Text>
+    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+      <ScrollView contentContainerStyle={styles.contentContainer}>
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => router.back()}>
+            <Text style={[styles.backButton, { color: colors.text }]}>{"<"}</Text>
           </TouchableOpacity>
-        ))}
-      </ScrollView>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>Schedule Details</Text>
+          <ThemeToggle />
+        </View>
 
-      {selectedTime && (
-        <View>
-          <Text style={{ fontSize: 16, marginTop: 16 }}>
-            Available Specialists
+        <View style={[styles.section, { backgroundColor: colors.cardBackground }]}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Selected Date</Text>
+          <Text style={{ color: colors.subText }}>
+            {new Date(selectedDate as string).toLocaleDateString()}
           </Text>
-          <ScrollView style={{ maxHeight: 200 }}>
-            {filteredWorkers.map((worker) => (
-              <TouchableOpacity
-                key={worker.id}
-                onPress={() => setSelectedWorker(worker)}
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  backgroundColor: "#f9f9f9",
-                  padding: 10,
-                  marginVertical: 5,
-                  borderRadius: 10,
-                  borderColor:
-                    selectedWorker?.id === worker.id ? "blue" : "#ccc",
-                  borderWidth: selectedWorker?.id === worker.id ? 2 : 1,
-                }}
-              >
-                <Image
-                  source={worker.image}
-                  style={{
-                    width: 50,
-                    height: 50,
-                    borderRadius: 25,
-                    marginRight: 10,
-                  }}
-                />
-                <Text style={{ flex: 1 }}>{worker.name}</Text>
-                {selectedWorker?.id === worker.id && (
-                  <Text style={{ color: "blue" }}>✔</Text>
-                )}
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
         </View>
-      )}
-
-      <TouchableOpacity
-        onPress={handleConfirm}
-        disabled={!selectedTime || !selectedWorker}
-        style={{
-          backgroundColor: selectedTime && selectedWorker ? "blue" : "gray",
-          padding: 15,
-          borderRadius: 10,
-          marginTop: 20,
-          alignItems: "center",
-        }}
-      >
-        <Text style={{ color: "white", fontWeight: "bold" }}>
-          Confirm Appointment
-        </Text>
-      </TouchableOpacity>
-
-      {showForm && (
-        <View style={{ marginTop: 20 }}>
-          <Text style={{ fontWeight: "bold" }}>Enter Your Details</Text>
-          <TextInput
-            placeholder="Full Name"
-            value={name}
-            onChangeText={setName}
-            style={styles.input}
-          />
-          <TextInput
-            placeholder="Address"
-            value={address}
-            onChangeText={setAddress}
-            style={styles.input}
-          />
-          <TextInput
-            placeholder="Phone Number"
-            value={phone}
-            onChangeText={setPhone}
-            keyboardType="phone-pad"
-            style={styles.input}
-          />
-          <Button title="Continue" onPress={handleSave} />
+        
+        <Text style={[styles.subHeader, { color: colors.text }]}>1. Choose a Service</Text>
+        <View style={styles.listContainer}>
+          {serviceCategories.map(service => (
+            <TouchableOpacity
+              key={service}
+              style={[
+                styles.itemButton,
+                { 
+                  backgroundColor: selectedService === service ? colors.primaryButton : colors.cardBackground,
+                  borderColor: colors.inputBorder
+                }
+              ]}
+              onPress={() => setSelectedService(service)}
+            >
+              <Text style={{ color: selectedService === service ? colors.primaryButtonText : colors.text }}>
+                {service}
+              </Text>
+            </TouchableOpacity>
+          ))}
         </View>
-      )}
-    </View>
+
+        <Text style={[styles.subHeader, { color: colors.text }]}>2. Choose a Specialist</Text>
+        <View style={styles.listContainer}>
+          {workers.length > 0 ? workers.map(worker => (
+            <TouchableOpacity
+              key={worker._id}
+              style={[
+                styles.itemButton,
+                {
+                  backgroundColor: selectedWorker?._id === worker._id ? colors.primaryButton : colors.cardBackground,
+                  borderColor: colors.inputBorder
+                }
+              ]}
+              onPress={() => setSelectedWorker(worker)}
+            >
+              <Text style={{ color: selectedWorker?._id === worker._id ? colors.primaryButtonText : colors.text }}>
+                {worker.name}
+              </Text>
+            </TouchableOpacity>
+          )) : <Text style={{ color: colors.subText }}>No specialists available.</Text>}
+        </View>
+
+        <TouchableOpacity
+          style={[styles.confirmButton, { backgroundColor: colors.primaryButton, opacity: loading ? 0.7 : 1 }]}
+          onPress={handleBookAppointment}
+          disabled={loading}
+        >
+          <Text style={[styles.confirmText, { color: colors.primaryButtonText }]}>
+            {loading ? "Booking..." : "Book Now"}
+          </Text>
+        </TouchableOpacity>
+      </ScrollView>
+    </SafeAreaView>
   );
-};
+}
 
-const styles = {
-  input: {
-    borderWidth: 1,
-    borderColor: "#ccc",
-    borderRadius: 8,
-    padding: 10,
-    marginVertical: 8,
-  },
+const styles = StyleSheet.create({
+  container: { flex: 1 },
+  contentContainer: { padding: 20 },
   header: {
     flexDirection: "row",
     alignItems: "center",
     marginBottom: 20,
+    justifyContent: "space-between",
   },
-  backButton: { fontSize: 24, color: "blue" },
-  headerTitle: {
-    flex: 1,
+  backButton: { fontSize: 24, fontWeight: "bold" },
+  headerTitle: { fontSize: 20, fontWeight: "bold" },
+  section: {
+    padding: 15,
+    borderRadius: 12,
+    marginBottom: 20,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: "bold",
+    marginBottom: 5,
+  },
+  subHeader: {
+    fontSize: 18,
+    fontWeight: "600",
+    marginTop: 10,
+    marginBottom: 10,
+  },
+  listContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  itemButton: {
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    margin: 5,
+  },
+  confirmButton: {
+    marginTop: 30,
+    padding: 15,
+    borderRadius: 12,
+    alignItems: "center",
+  },
+  confirmText: {
+    fontSize: 16,
     textAlign: "center",
-    fontSize: 20,
     fontWeight: "bold",
   },
-};
-
-export default ScheduleView;
+});

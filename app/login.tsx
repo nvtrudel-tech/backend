@@ -1,4 +1,4 @@
-// app/login.tsx
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import React, { useState } from "react";
@@ -6,64 +6,95 @@ import {
   Alert,
   Image,
   KeyboardAvoidingView,
-  Platform,
-  StyleSheet,
+  Platform, ScrollView, StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
-  View,
-  ScrollView,
+  View
 } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+// Assuming these are local components, ensure the path is correct
+import ThemeToggle from "./components/ThemeToggle";
+import { useTheme } from "./context/ThemeContext";
 
-const API_URL = "http://localhost:6000/api/auth";
+// It's a good practice to place the API URL in a configurable spot
+// Make sure this IP is accessible from your mobile device
+const API_URL = "http://172.20.10.14:6000/api/auth";
 
 export default function Login() {
   const router = useRouter();
+  const { colors } = useTheme();
+  
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
 
   const handleLogin = async () => {
-    if (!email || !password) {
-      Alert.alert("Error", "Please fill in all fields");
+    // Basic validation
+    if (!email.trim() || !password.trim()) {
+      Alert.alert("Missing Information", "Please enter both email and password.");
       return;
     }
+    setLoading(true);
 
     try {
       const response = await fetch(`${API_URL}/login`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({ email, password }),
       });
 
       const data = await response.json();
+
       if (!response.ok) {
-        Alert.alert("Login Failed", data.msg || "Invalid credentials");
+        // Use the server's message if available, otherwise a generic one
+        Alert.alert("Login Failed", data.msg || "Invalid credentials. Please try again.");
+        setLoading(false);
         return;
       }
 
+      // Ensure user data and role exist before proceeding
       const { user } = data;
-      await AsyncStorage.setItem("user", JSON.stringify(user));
-      Alert.alert("Welcome!", `Hello ${user.name}`);
+      if (!user || !user.role) {
+          Alert.alert("Login Error", "User data is incomplete. Cannot log in.");
+          setLoading(false);
+          return;
+      }
 
-      if (user.role === "worker") {
+      // Store user data for session management
+      await AsyncStorage.setItem("user", JSON.stringify(user));
+      
+      // --- DEBUGGING ALERT ---
+      // This alert will show you the EXACT role your app is receiving from the server.
+      // If it doesn't say "worker" or "specialist", the redirection logic below will fail.
+      //Alert.alert("Welcome", `Your trade is: "${user.role}"`);
+      Alert.alert(`Welcome, ${user.name}!`, `Your trade is: "${user.role}"`);
+      console.log("User role from API:", user.role);
+
+      // Sanitize the role for comparison (lowercase and trim whitespace)
+      const userRole = (user.role || '').trim().toLowerCase();
+
+      // Navigate based on the sanitized user role
+      if (userRole === "worker" || userRole === "specialist") {
+        // If the user is a worker or specialist, redirect to the worker dashboard
         router.replace("/worker/dashboard");
       } else {
-        router.replace("/index");
+        // For 'customer' and all other roles, redirect to the main app screen
+        router.replace("/");
       }
-    } catch (err) {
-      console.error("Login error:", err);
-      Alert.alert("Error", "Unable to connect to the server");
+
+    } catch (error) {
+      console.error("An error occurred during login:", error);
+      Alert.alert("Connection Error", "Unable to connect to the server. Please check your network connection.");
+    } finally {
+      // Ensure loading is set to false whether the login succeeds or fails
+      setLoading(false);
     }
   };
 
-  const handleBypass = () => {
-    Alert.alert("Bypassing Login", "Redirecting to Worker Dashboard");
-    router.replace("/worker/dashboard");
-  };
-
   return (
-    <LinearGradient colors={["#3b82f6", "#6366f1"]} style={styles.gradient}>
+    <LinearGradient colors={colors.gradient} style={styles.gradient}>
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={styles.keyboardView}
@@ -72,43 +103,55 @@ export default function Login() {
           contentContainerStyle={styles.scrollContainer}
           showsVerticalScrollIndicator={false}
         >
+          {/* Header Bar for Theme Toggle */}
+          <View style={styles.headerBar}>
+            <ThemeToggle />
+          </View>
+          
           <Image
             source={require("../assets/images/logo_elec.png")}
             style={styles.logo}
             resizeMode="contain"
           />
 
-          <View style={styles.formContainer}>
+          <View style={[styles.formContainer, { backgroundColor: colors.cardBackground }]}>
             <TextInput
               placeholder="Email"
-              placeholderTextColor="#aaa"
+              placeholderTextColor={colors.subText}
               value={email}
               onChangeText={setEmail}
-              style={styles.input}
+              style={[styles.input, { backgroundColor: colors.background, color: colors.text, borderColor: colors.inputBorder }]}
               autoCapitalize="none"
+              keyboardType="email-address"
             />
 
             <TextInput
               placeholder="Password"
-              placeholderTextColor="#aaa"
+              placeholderTextColor={colors.subText}
               value={password}
               onChangeText={setPassword}
               secureTextEntry
-              style={styles.input}
+              style={[styles.input, { backgroundColor: colors.background, color: colors.text, borderColor: colors.inputBorder }]}
             />
 
-            <TouchableOpacity style={styles.buttonPrimary} onPress={handleLogin}>
-              <Text style={styles.buttonPrimaryText}>Login</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.buttonSecondary} onPress={handleBypass}>
-              <Text style={styles.buttonSecondaryText}>
-                Bypass → Worker Dashboard
+            <TouchableOpacity 
+              style={[styles.buttonPrimary, { backgroundColor: colors.primaryButton }]} 
+              onPress={handleLogin}
+              disabled={loading}
+            >
+              <Text style={[styles.buttonPrimaryText, { color: colors.primaryButtonText }]}>
+                {loading ? "Logging In..." : "Login"}
               </Text>
             </TouchableOpacity>
 
-            <TouchableOpacity onPress={() => router.push("/signup")}>
-              <Text style={styles.linkText}>Don't have an account? Sign up</Text>
+            <TouchableOpacity 
+              onPress={() => router.push("/signup")} 
+              disabled={loading}
+              style={styles.linkButton}
+            >
+              <Text style={[styles.linkText, { color: colors.text }]}>
+                Don't have an account? <Text style={{fontWeight: 'bold'}}>Sign Up</Text>
+              </Text>
             </TouchableOpacity>
           </View>
         </ScrollView>
@@ -127,6 +170,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 28,
     paddingVertical: 40,
   },
+  headerBar: {
+    position: 'absolute',
+    top: 50,
+    right: 20,
+    zIndex: 1,
+  },
   logo: {
     width: 140,
     height: 140,
@@ -134,50 +183,38 @@ const styles = StyleSheet.create({
   },
   formContainer: {
     width: "100%",
-    backgroundColor: "rgba(255, 255, 255, 0.15)",
     padding: 25,
     borderRadius: 20,
     shadowColor: "#000",
-    shadowOpacity: 0.2,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 5,
   },
   input: {
-    backgroundColor: "#fff",
     padding: 15,
     borderRadius: 12,
     fontSize: 16,
     marginBottom: 15,
+    borderWidth: 1,
   },
   buttonPrimary: {
-    backgroundColor: "#fff",
     paddingVertical: 15,
     borderRadius: 12,
     alignItems: "center",
     marginTop: 10,
   },
   buttonPrimaryText: {
-    color: "#3b82f6",
     fontSize: 16,
     fontWeight: "600",
   },
-  buttonSecondary: {
-    backgroundColor: "#10b981",
-    paddingVertical: 15,
-    borderRadius: 12,
-    alignItems: "center",
-    marginTop: 12,
-  },
-  buttonSecondaryText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "600",
+  linkButton: {
+    marginTop: 24,
+    alignItems: 'center'
   },
   linkText: {
-    color: "#fff",
-    marginTop: 24,
     fontSize: 14,
     textAlign: "center",
-    opacity: 0.9,
   },
 });
+

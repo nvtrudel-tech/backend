@@ -1,0 +1,30 @@
+{
+    "home": {
+      "title": "Connexions",
+      "serviceTitleDefault": "Travaux électriques",
+      "subText": "Besoin de travaux? Sélectionnez-le ci-dessous et prenez rendez-vous.",
+      "scheduleButton": "Prendre rendez-vous",
+      "emergencyButton": "Aide d'urgence",
+      "myAppointments": "Mes prochains rendez-vous",
+      "noAppointments": "Vous n'avez aucun rendez-vous en attente, confirmé ou en révision de prix."
+    },
+    "calendar": {
+      "bookService": "Réserver un {{service}}",
+      "selectDate": "Choisir la date",
+      "selectTime": "Choisir l'heure",
+      "confirmTime": "Confirmer l'heure",
+      "selectedDateTime": "Date et heure:"
+    },
+    "negotiation": {
+      "reviewTitle": "Examiner la proposition",
+      "accept": "Accepter le prix",
+      "reject": "Rejeter",
+      "cancel": "Annuler le travail"
+    },
+    "status": {
+      "pending": "en attente",
+      "price_pending": "En attente d'examen du prix ({{price}})",
+      "confirmed": "confirmé"
+    }
+  }
+  

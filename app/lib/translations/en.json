@@ -1,0 +1,30 @@
+{
+    "home": {
+      "title": "Connexions",
+      "serviceTitleDefault": "Electrical work",
+      "subText": "Need trade work done? Select it below and schedule an appointment.",
+      "scheduleButton": "Schedule Appointment",
+      "emergencyButton": "Emergency Help",
+      "myAppointments": "My Upcoming Appointments",
+      "noAppointments": "You have no pending, confirmed, or price review appointments."
+    },
+    "calendar": {
+      "bookService": "Book a {{service}}",
+      "selectDate": "Select Date",
+      "selectTime": "Select Time",
+      "confirmTime": "Confirm Time",
+      "selectedDateTime": "Selected Date & Time:"
+    },
+    "negotiation": {
+      "reviewTitle": "Review Specialist Proposal",
+      "accept": "Accept Price",
+      "reject": "Reject",
+      "cancel": "Cancel Job"
+    },
+    "status": {
+      "pending": "pending",
+      "price_pending": "Awaiting Price Review ({{price}})",
+      "confirmed": "confirmed"
+    }
+  }
+  
