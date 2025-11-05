@@ -4,6 +4,12 @@ import { LinearGradient } from "expo-linear-gradient";
 import * as Location from "expo-location";
 import * as Notifications from 'expo-notifications';
 import { useRouter } from "expo-router";
+
+// --- CUSTOM MARKER ICONS ---
+import PlugIcon from "../assets/images/PlugHQ.png";       // For "Connexions"
+import ElectricianIcon from "../assets/images/logo_elec.png"; // For other electricians
+import PlumberIcon from "../assets/images/Plumbing.png";  // For plumbers
+
 import React, { useEffect, useState } from "react";
 import { useTranslation } from 'react-i18next';
 import {
@@ -27,7 +33,7 @@ import ThemeToggle from "./components/ThemeToggle";
 import { useTheme } from "./context/ThemeContext";
 
 const screenWidth = Dimensions.get("window").width;
-const API_URL = "http://172.20.10.14:6000/api";
+const API_URL = "https://backend-tknm.onrender.com/api";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -59,10 +65,8 @@ export default function ElectricianAppView() {
   const [jobToNegotiate, setJobToNegotiate] = useState<any | null>(null);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
 
-  // --- NEW: Workers state ---
   const [workers, setWorkers] = useState<any[]>([]);
   const [isLoadingWorkers, setIsLoadingWorkers] = useState(true);
-  // ---
 
   const categoryLabels = [
     "Electrician", "Plumber", "Drywall", "Carpenter", "Roofer",
@@ -115,7 +119,6 @@ export default function ElectricianAppView() {
     initialize();
   }, []);
   
-  // Polling for appointments
   useEffect(() => {
     if (!userId) return;
     fetchAppointments(userId);
@@ -125,7 +128,6 @@ export default function ElectricianAppView() {
     return () => clearInterval(interval);
   }, [userId]);
 
-  // --- NEW: Fetch workers on mount and poll ---
   useEffect(() => {
     fetchWorkers();
     const interval = setInterval(() => {
@@ -133,16 +135,13 @@ export default function ElectricianAppView() {
     }, 10000); // Poll every 10 seconds
     return () => clearInterval(interval);
   }, []);
-  // ---
 
-  // --- NEW: Fetch workers function ---
   const fetchWorkers = async () => {
     try {
       const response = await fetch(`${API_URL}/workers`);
       if (!response.ok) throw new Error("Failed to fetch workers");
       const allWorkers = await response.json();
       
-      // Only update if there's a change
       if (JSON.stringify(allWorkers) !== JSON.stringify(workers)) {
         setWorkers(allWorkers);
       }
@@ -152,7 +151,6 @@ export default function ElectricianAppView() {
       setIsLoadingWorkers(false);
     }
   };
-  // ---
 
   const fetchAppointments = async (currentUserId: string) => {
     try {
@@ -600,9 +598,12 @@ export default function ElectricianAppView() {
     );
   };
 
-  // --- NEW: Render worker pins on map ---
+  // --- UPDATED: Render worker pins on map ---
   const renderWorkerMarkers = () => {
     if (!workers || workers.length === 0) return null;
+
+    // --- ID for "Connexions" Specialist ---
+    const specialistConnexionsID = "68fd7fc35a8e0978ba196807"; 
 
     return workers
       .filter(worker => {
@@ -617,17 +618,43 @@ export default function ElectricianAppView() {
       })
       .map(worker => {
         const [longitude, latitude] = worker.currentLocation.coordinates;
+
+        // Determine worker type based on _id and skills
+        const isSpecialistConnexions = worker._id === specialistConnexionsID; 
+        const isElectrician = worker.skills?.includes("Electrician") && !isSpecialistConnexions;
+        const isPlumber = worker.skills?.includes("Plumber"); // Plumbers can be any plumber, no specific ID needed unless desired
+
         return (
           <Marker
             key={worker._id}
             coordinate={{ latitude, longitude }}
             title={worker.name}
             description={`${worker.skills?.join(', ') || 'Specialist'}`}
-            pinColor="#3b82f6" // Blue color for worker pins
           >
-            <View style={styles.workerMarker}>
-              <Ionicons name="person" size={20} color="#fff" />
-            </View>
+            {isSpecialistConnexions ? (
+              // --- 1. "Connexions" Specialist ---
+              <Image
+                source={PlugIcon}
+                style={styles.workerMarkerImage} 
+              />
+            ) : isElectrician ? (
+              // --- 2. Other Electricians ---
+              <Image
+                source={ElectricianIcon}
+                style={styles.electricianMarkerImage}
+              />
+            ) : isPlumber ? (
+              // --- 3. Plumbers ---
+              <Image
+                source={PlumberIcon}
+                style={styles.plumberMarkerImage} // New style for plumbers
+              />
+            ) : (
+              // --- 4. All Other Specialists ---
+              <View style={styles.defaultWorkerMarker}> 
+                <Ionicons name="person" size={20} color="#fff" />
+              </View>
+            )}
           </Marker>
         );
       });
@@ -843,8 +870,37 @@ const styles = StyleSheet.create({
     borderColor: '#ddd',
   },
   
-  // NEW: Worker marker style
-  workerMarker: {
+  // --- CUSTOM MARKER STYLES ---
+
+  // 1. Style for the "Connexions" Plug Icon
+  workerMarkerImage: {
+    width: 40,
+    height: 40,
+    resizeMode: 'contain',
+  },
+
+  // 2. Style for other "Electrician" icons
+  electricianMarkerImage: {
+    width: 40,
+    height: 40,
+    resizeMode: 'contain',
+    borderRadius: 20, // Optional: make it circular if the logo looks better
+    borderWidth: 2,
+    borderColor: '#fff', // Optional: add a white border
+  },
+
+  // 3. Style for "Plumber" icons (NEW)
+  plumberMarkerImage: {
+    width: 40,
+    height: 40,
+    resizeMode: 'contain',
+    borderRadius: 20, // Optional: make it circular
+    borderWidth: 2,
+    borderColor: '#fff', // Optional: add a white border
+  },
+
+  // 4. Style for all OTHER specialist pins (blue circle)
+  defaultWorkerMarker: {
     backgroundColor: '#3b82f6',
     borderRadius: 20,
     width: 40,
@@ -859,6 +915,7 @@ const styles = StyleSheet.create({
     shadowRadius: 3,
     elevation: 5,
   },
+  // --- END OF CUSTOM MARKER STYLES ---
   
   tabBarContainer: {
     position: 'absolute',

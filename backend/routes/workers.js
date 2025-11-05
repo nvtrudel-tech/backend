@@ -2,6 +2,56 @@ const express = require("express");
 const Worker = require("../models/Worker"); // Adjust path as needed
 const router = express.Router();
 
+// --- NEW ROUTE: CREATE A NEW WORKER PROFILE ---
+// This is called from Signup.js when role is 'specialist'
+router.post("/", async (req, res) => {
+  const { name, email, phone, authId } = req.body;
+
+  try {
+    // Check if a worker with this email or authId already exists
+    const existingEmail = await Worker.findOne({ email });
+    if (existingEmail) {
+      return res.status(400).json({ msg: "A worker profile with this email already exists." });
+    }
+    
+    // Note: authId isn't set as unique in the schema, which is probably correct
+    // in case one auth account could link to multiple profiles (though unlikely in this setup).
+    // We'll proceed assuming one-to-one.
+
+    const newWorker = new Worker({
+      name,
+      email,
+      phone,
+      authId, // Link to the User account
+      // Set any other default values from your schema here
+      availability: { // Example default availability
+        monday: { start: '09:00', end: '17:00', available: true },
+        tuesday: { start: '09:00', end: '17:00', available: true },
+        wednesday: { start: '09:00', end: '17:00', available: true },
+        thursday: { start: '09:00', end: '17:00', available: true },
+        friday: { start: '09:00', end: '17:00', available: true },
+        saturday: { start: '', end: '', available: false },
+        sunday: { start: '', end: '', available: false },
+      },
+      currentLocation: {
+        type: 'Point',
+        coordinates: [0, 0] // Default location
+      }
+    });
+
+    await newWorker.save();
+    
+    // Send back the created worker (without sensitive data if any)
+    res.status(201).json(newWorker);
+
+  } catch (err) {
+    console.error("Create worker error:", err);
+    res.status(500).json({ success: false, msg: err.message });
+  }
+});
+// --- END NEW ROUTE ---
+
+
 // --- SAVE WORKER PUSH TOKEN ---
 // This matches the call from your 'worker.js' (worker app)
 router.post("/save-push-token", async (req, res) => {

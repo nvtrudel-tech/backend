@@ -23,7 +23,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import ThemeToggle from "../components/ThemeToggle";
 import { useTheme } from "../context/ThemeContext";
 
-const API_URL = "http://172.20.10.14:6000/api";
+const API_URL = "https://backend-tknm.onrender.com/api";
 const ALL_SKILLS = [
   "Electrician", "Plumber", "Drywall", "Carpenter", "Roofer", 
   "Fire/Alarm", "Home Automation", "HVAC", "Painter", "Heavy Equipment"

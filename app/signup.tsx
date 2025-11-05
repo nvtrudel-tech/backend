@@ -18,7 +18,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useTheme } from "./context/ThemeContext";
 import ThemeToggle from "./components/ThemeToggle";
 
-const API_URL = "http://172.20.10.14:6000/api";
+const API_URL = "https://backend-tknm.onrender.com/api";
 
 export default function Signup() {
   const router = useRouter();
@@ -30,6 +30,31 @@ export default function Signup() {
   const [password, setPassword] = useState("");
   const [role, setRole] = useState("customer");
   const [loading, setLoading] = useState(false);
+
+  /**
+   * Helper function to robustly handle API errors (JSON or HTML/Text)
+   */
+  const handleApiError = async (response, defaultMessage) => {
+    try {
+      // Try to get text error message, in case it's not JSON
+      const errorText = await response.text();
+      console.error("Server responded with an error:", errorText);
+      
+      // Try to parse as JSON in case the server *did* send a JSON error
+      let errorData;
+      try {
+        errorData = JSON.parse(errorText);
+      } catch (e) {
+        // It wasn't JSON, throw the text (or default if text is empty)
+        throw new Error(errorText || defaultMessage);
+      }
+      // It was JSON, use the message
+      throw new Error(errorData.msg || defaultMessage);
+    } catch (e) {
+      // Handle cases where .text() fails or re-throw the parsed error
+      throw new Error(e.message || defaultMessage);
+    }
+  };
 
   const handleSignup = async () => {
     if (!name || !phone || !email || !password) {
@@ -46,10 +71,13 @@ export default function Signup() {
         body: JSON.stringify({ name, phone, email, password, role }),
       });
 
-      const authData = await authResponse.json();
       if (!authResponse.ok) {
-        throw new Error(authData.msg || "Failed to create user account.");
+        // Use the helper to handle non-JSON error responses
+        await handleApiError(authResponse, "Failed to create user account.");
       }
+
+      // If we get here, authResponse.ok was true, so .json() is safe
+      const authData = await authResponse.json();
 
       // Step 2: If the user is a specialist, also create a worker profile.
       if (role === 'specialist') {
@@ -66,16 +94,17 @@ export default function Signup() {
         });
 
         if (!workerResponse.ok) {
-            const workerData = await workerResponse.json();
-            // This is a fallback error. Ideally, the backend would handle this transactionally.
-            throw new Error(workerData.msg || "User account was created, but failed to create the specialist profile.");
+          // This is a fallback error. Ideally, the backend would handle this transactionally.
+          // Use the helper to handle non-JSON error responses
+          await handleApiError(workerResponse, "User account was created, but failed to create the specialist profile.");
         }
       }
 
       Alert.alert("Success", "Account created successfully! Please log in.");
       router.push("/login");
 
-    } catch (err: any) {
+    } catch (err) {
+      // This will now catch the much clearer error messages
       console.error("Signup error:", err);
       Alert.alert("Signup Failed", err.message);
     } finally {
@@ -297,4 +326,3 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
 });
-

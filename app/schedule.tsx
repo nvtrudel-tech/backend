@@ -21,7 +21,7 @@ import { Ionicons } from '@expo/vector-icons'; // Import icons
 import ThemeToggle from "./components/ThemeToggle";
 import { useTheme } from "./context/ThemeContext";
 
-const API_URL = "http://172.20.10.14:6000/api";
+const API_URL = "https://backend-tknm.onrender.com/api";
 
 export default function ScheduleScreen() {
   const router = useRouter();

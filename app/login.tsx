@@ -18,7 +18,7 @@ import { useTheme } from "./context/ThemeContext";
 
 // It's a good practice to place the API URL in a configurable spot
 // Make sure this IP is accessible from your mobile device
-const API_URL = "http://172.20.10.14:6000/api/auth";
+const API_URL = "hhttps://backend-tknm.onrender.com/api/auth";
 
 export default function Login() {
   const router = useRouter();
