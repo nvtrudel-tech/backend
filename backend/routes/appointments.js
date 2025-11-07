@@ -6,21 +6,17 @@ const router = express.Router();
 
 // --- Helper function to send push notifications ---
 const sendPushNotification = async (expoPushToken, title, body) => {
-  // Check if the token is valid
   if (!expoPushToken || !expoPushToken.startsWith('ExponentPushToken[')) {
     return console.log(`Invalid or missing push token: ${expoPushToken}. Cannot send notification.`);
   }
-
   const message = {
     to: expoPushToken,
     sound: 'default',
     title: title,
     body: body,
-    data: { screen: 'home' }, // Example: data to deep-link in the app
+    data: { screen: 'home' }, 
   };
-
   try {
-    // Use the official Expo push notification endpoint
     await fetch('https://exp.host/--/api/v2/push/send', {
       method: 'POST',
       headers: {
@@ -48,24 +44,20 @@ router.get("/", async (req, res) => {
 });
 
 // ✅ Create appointment
-// This route constructs the detailed notification body for the worker
 router.post("/", async (req, res) => {
   try {
     const { customer, worker, service, date, address, description } = req.body;
     
-    // Check for all required fields
     if (!customer || !worker || !service || !date || !address || !description) {
       return res.status(400).json({ msg: "Please provide all required fields." });
     }
 
-    // Find the worker *before* creating the appointment
     const bookedWorker = await Worker.findById(worker).select('expoPushToken name');
     
     if (!bookedWorker) {
       return res.status(404).json({ msg: "Worker not found." });
     }
     
-    // Create and save the new appointment (status defaults to 'pending')
     const appointment = new Appointment({ 
       customer, worker, service, date, address, description 
     });
@@ -73,18 +65,12 @@ router.post("/", async (req, res) => {
 
     // --- Send detailed notification logic to worker on new booking ---
     try {
-      // Find the customer who booked (to get their name)
       const bookingCustomer = await User.findById(customer).select('name');
-      
-      // Check if the worker has a token
       if (bookedWorker.expoPushToken) {
         const customerName = bookingCustomer?.name || 'A Customer';
-
-        // 1. Format the date and time clearly
         const appointmentDate = new Date(date).toLocaleDateString();
         const appointmentTime = new Date(date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         
-        // 2. Construct the detailed notification body using newlines for clarity
         const notificationBody = 
 `Customer: ${customerName}
 Service: ${service}
@@ -92,7 +78,6 @@ Date: ${appointmentDate} at ${appointmentTime}
 Address: ${address}
 Job Description: ${description}`;
 
-        // Send notification to the worker
         await sendPushNotification(
           bookedWorker.expoPushToken,
           `NEW BOOKING: ${service} Job (Pending Price)`, 
@@ -109,30 +94,60 @@ Job Description: ${description}`;
     res.status(201).json(appointment);
   } catch (err) {
     console.error("Create appointment error:", err);
+    // --- MODIFIED: Fixed typo 5.00 -> 500 ---
     res.status(500).json({ msg: "Error creating appointment", error: err.message });
   }
 });
 
-// ✅ Update appointment (Handles status, date, AND workerPrice)
+// --- MODIFIED: Update appointment (Handles new priceBreakdown) ---
 router.put("/:id", async (req, res) => {
   try {
-    const { status, date, workerPrice } = req.body; 
+    // We now expect 'priceBreakdown' (an array) instead of 'workerPrice'
+    const { status, date, priceBreakdown } = req.body; 
     
     if (!status) {
        return res.status(400).json({ msg: "Status is required." });
     }
     
-    // Fetch the *current* appointment status before updating
     const oldAppointment = await Appointment.findById(req.params.id).select('status');
     const oldStatus = oldAppointment ? oldAppointment.status : null;
 
     const updateFields = { status };
-    // Only update date/price if provided (used by the Worker Dashboard or Customer App)
     if (date) updateFields.date = date; 
-    // IMPORTANT: If status is being set back to 'pending' from 'price_pending' (customer rejected), 
-    // we should NOT clear the workerPrice or date, so the worker can review their old proposal.
-    if (workerPrice !== undefined) updateFields.workerPrice = workerPrice;
     
+    // --- MODIFIED PRICE LOGIC ---
+    let newTotalPrice = 0; // Default to 0
+
+    if (priceBreakdown && Array.isArray(priceBreakdown) && priceBreakdown.length > 0) {
+      
+      const cleanPriceBreakdown = priceBreakdown
+        .map(item => ({
+          item: String(item.item || '').trim(),
+          price: parseFloat(item.price) || 0 // Coerce NaN/"" to 0
+        }))
+        .filter(item => item.item && item.price > 0); // Filter out invalid/empty items
+
+      // Calculate total *only* from the clean list
+      newTotalPrice = cleanPriceBreakdown.reduce((acc, item) => acc + item.price, 0);
+      
+      if (cleanPriceBreakdown.length === 0 && status === 'price_pending') {
+        return res.status(400).json({ msg: "A price breakdown with valid items and positive prices is required." });
+      }
+
+      updateFields.priceBreakdown = cleanPriceBreakdown;
+      
+    } else if (status === 'price_pending') {
+      // Worker is submitting a price, but sent no breakdown array
+      return res.status(400).json({ msg: "A price breakdown is required to propose a price." });
+    }
+    
+    // --- THIS IS THE CRITICAL FIX ---
+    // Always set totalPrice and workerPrice, even if they are 0.
+    // This prevents "null" from being saved to the database.
+    updateFields.totalPrice = newTotalPrice;
+    updateFields.workerPrice = newTotalPrice; 
+    // --- END FIX ---
+
     const appointment = await Appointment.findByIdAndUpdate(
       req.params.id, 
       { $set: updateFields },
@@ -143,40 +158,34 @@ router.put("/:id", async (req, res) => {
       return res.status(404).json({ msg: "Appointment not found" });
     }
     
-    // --- Notification Logic ---
+    // --- Notification Logic (MODIFIED to use totalPrice) ---
     
-    // 1. Notify CUSTOMER when worker changes status to price_pending, en_route, confirmed, completed, cancelled
+    // 1. Notify CUSTOMER
     try {
       if (appointment.customer && appointment.customer.expoPushToken) {
         let notificationTitle;
         let notificationBody;
         
-        if (status === 'price_pending' && oldStatus !== 'price_pending') { // New price proposed by worker
+        if (status === 'price_pending' && oldStatus !== 'price_pending') { 
           notificationTitle = `Price Proposed!`;
-          notificationBody = `${appointment.worker?.name || 'Your specialist'} has proposed a price of $${appointment.workerPrice} for the ${appointment.service} job scheduled for ${new Date(appointment.date).toLocaleDateString()}. Tap to review and accept.`;
+          // Use the new totalPrice
+          notificationBody = `${appointment.worker?.name || 'Your specialist'} has proposed a price of $${appointment.totalPrice.toFixed(2)} for the ${appointment.service} job. Tap to review the breakdown.`;
         
-        // --- NEW: Handle 'en_route' notification ---
-        } else if (status === 'en_route' && oldStatus !== 'en_route') { // Worker is on the way
+        } else if (status === 'en_route' && oldStatus !== 'en_route') {
           notificationTitle = `Your Specialist is On The Way!`;
           notificationBody = `${appointment.worker?.name || 'Your specialist'} is heading to your address for the ${appointment.service} job.`;
-        // ---
             
-        } else if (status === 'confirmed' && oldStatus !== 'confirmed') { // Status changed to confirmed
+        } else if (status === 'confirmed' && oldStatus !== 'confirmed') { 
           notificationTitle = `Appointment Confirmed!`;
-          notificationBody = `Your ${appointment.service} job with ${appointment.worker?.name || 'your specialist'} is confirmed for $${appointment.workerPrice}.`;
+          // Use the new totalPrice
+          notificationBody = `Your ${appointment.service} job with ${appointment.worker?.name || 'your specialist'} is confirmed for $${appointment.totalPrice.toFixed(2)}.`;
         } else if (status === 'completed') {
           notificationTitle = `Job Completed!`;
-          notificationBody = `The ${appointment.service} job is complete. Final price: $${appointment.workerPrice}.`;
+          // Use the new totalPrice
+          notificationBody = `The ${appointment.service} job is complete. Final price: $${appointment.totalPrice.toFixed(2)}.`;
         } else if (status === 'cancelled') {
            notificationTitle = `Appointment Canceled!`;
-           // Check if customer or worker initiated the cancel
-           if (oldStatus === 'price_pending' && req.body.workerPrice) {
-               // Worker canceled (already handled by other logic, but keeping this safe check)
-               notificationBody = `ALERT: ${appointment.worker?.name || 'Your specialist'} has canceled the ${appointment.service} job. Please re-book.`;
-           } else {
-               // Customer canceled (or initial pending job)
-               notificationBody = `Your ${appointment.service} job has been cancelled.`;
-           }
+           notificationBody = `Your ${appointment.service} job has been cancelled.`;
         }
         
         if (notificationTitle) {
@@ -193,15 +202,15 @@ router.put("/:id", async (req, res) => {
        console.error("Failed to send status update notification to customer:", notifyError);
     }
     
-    // 2. Notify WORKER when customer makes a decision (status changes FROM price_pending)
-    // This handles the customer accepting (confirmed) or rejecting/countering (pending) or cancelling.
+    // 2. Notify WORKER
     if (appointment.worker && appointment.worker.expoPushToken && oldStatus === 'price_pending') {
          let workerNotificationTitle;
          let workerNotificationBody;
          
          if (status === 'confirmed') {
              workerNotificationTitle = `Price Accepted! 🎉`;
-             workerNotificationBody = `The customer accepted your price of $${appointment.workerPrice}. The job is now confirmed!`;
+             // Use the new totalPrice
+             workerNotificationBody = `The customer accepted your price of $${appointment.totalPrice.toFixed(2)}. The job is now confirmed!`;
          } else if (status === 'pending') {
              workerNotificationTitle = `Price Rejected/Countered`;
              workerNotificationBody = `The customer rejected your price proposal for the ${appointment.service} job. Review the details to send a new proposal.`;
@@ -223,8 +232,7 @@ router.put("/:id", async (req, res) => {
          }
     }
     
-    // --- NEW 3. Notify WORKER when customer changes a CONFIRMED job ---
-    // This handles the customer requesting reschedule (pending) or cancelling.
+    // 3. Notify WORKER (if customer cancels/reschedules a confirmed job)
     if (appointment.worker && appointment.worker.expoPushToken && oldStatus === 'confirmed') {
          let workerNotificationTitle;
          let workerNotificationBody;
@@ -263,7 +271,6 @@ router.delete("/:id", async (req, res) => {
   try {
     const appointment = await Appointment.findByIdAndDelete(req.params.id);
     if (!appointment) {
-      // --- FIX: Corrected 4TAM to 404 ---
       return res.status(404).json({ msg: "Appointment not found" });
     }
     res.json({ msg: "Deleted" });
@@ -273,4 +280,3 @@ router.delete("/:id", async (req, res) => {
 });
 
 module.exports = router;
-

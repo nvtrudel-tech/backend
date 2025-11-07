@@ -6,28 +6,24 @@ import * as ImagePicker from 'expo-image-picker';
 import * as Location from "expo-location";
 import * as Notifications from 'expo-notifications';
 import { useRouter } from "expo-router";
-import React, { useEffect, useState, useRef } from "react"; 
+import React, { useEffect, useState, useRef, useMemo } from "react"; // --- MODIFIED: Added useMemo ---
 import {
   Alert,
   Image, Modal, Platform
   , Pressable, ScrollView,
   StyleSheet,
   Text, TextInput, TouchableOpacity,
-  View, ActivityIndicator 
+  View, ActivityIndicator, KeyboardAvoidingView 
 } from "react-native";
 import MapView, { Marker } from "react-native-maps";
 import { SafeAreaView } from "react-native-safe-area-context";
 // --- FIXED PATHS ---
-// Assuming 'components' and 'context' folders are at the project root,
-// alongside the 'app' folder.
 import ThemeToggle from "../context/ThemeContext";
 import { useTheme } from "../context/ThemeContext";
 // ---
 
 // --- API URL ---
-// Make sure this IP is correct for your local network
-// const API_URL = "http://172.20.10.14:6000/api";
-const API_URL = "https://backend-tknm.onrender.com/api"; // For production
+const API_URL = "https://backend-tknm.onrender.com/api"; 
 
 const ALL_SKILLS = [
   "Electrician", "Plumber", "Drywall", "Carpenter", "Roofer", 
@@ -42,6 +38,12 @@ Notifications.setNotificationHandler({
     shouldSetBadge: false,
   }),
 });
+
+// --- NEW: Helper type for price items ---
+interface PriceItem {
+  item: string;
+  price: string; // Keep as string for input, convert on submit
+}
 
 export default function WorkerDashboard() {
   const { colors } = useTheme();
@@ -70,14 +72,15 @@ export default function WorkerDashboard() {
   const [isSaving, setIsSaving] = useState(false);
   const [skillModalVisible, setSkillModalVisible] = useState(false);
   
-  // --- Date Picker & Price Input State ---
+  // --- MODIFIED: Date Picker & Price Input State ---
   const [dateTimeModalVisible, setDateTimeModalVisible] = useState(false);
   const [currentJobToSchedule, setCurrentJobToSchedule] = useState<any | null>(null);
   const [selectedDateTime, setSelectedDateTime] = useState(new Date());
-  const [priceInput, setPriceInput] = useState(''); 
+  // We now use an array for the price breakdown
+  const [priceBreakdown, setPriceBreakdown] = useState<PriceItem[]>([{ item: '', price: '' }]);
   // ---
 
-  // Function to fetch appointments
+  // (fetchAppointments function is unchanged)
   const fetchAppointments = async (currentWorkerId: string) => {
     try {
       const appointmentsResponse = await fetch(`${API_URL}/appointments`);
@@ -109,7 +112,10 @@ export default function WorkerDashboard() {
     }
   };
 
-  // Main useEffect hook to initialize data
+  // (All other useEffects and functions down to handleScheduleJob are unchanged)
+  // ... (useEffect, registerForPushNotificationsAsync, handlePickImage, handleSaveProfile, handleClockToggle, etc.) ...
+  
+  // (useEffect for initialization is unchanged)
   useEffect(() => {
     const initialize = async () => {
       // 1. Check for user
@@ -169,7 +175,7 @@ export default function WorkerDashboard() {
     };
   }, [router]); // Only run on mount
 
-  // Polling useEffect for real-time appointments
+  // (Polling useEffect is unchanged)
   useEffect(() => {
     if (!workerId) return;
     const interval = setInterval(() => {
@@ -178,7 +184,7 @@ export default function WorkerDashboard() {
     return () => clearInterval(interval);
   }, [workerId]); 
 
-  // --- Get Initial Location Function ---
+  // (Location functions are unchanged)
   const getInitialLocation = async (currentWorkerId: string) => {
     let { status } = await Location.requestForegroundPermissionsAsync();
     if (status !== "granted") {
@@ -197,20 +203,16 @@ export default function WorkerDashboard() {
       setLocationError("Could not get location. Is GPS on?");
     }
   };
-
-  // --- Start High-Accuracy Location Tracking ---
   const startLocationTracking = async (currentWorkerId: string) => {
     if (locationSubscription.current) {
       console.log("Location tracking is already active.");
       return; 
     }
-    
     let { status } = await Location.requestForegroundPermissionsAsync();
     if (status !== "granted") {
       setLocationError("Location permission is required to clock in.");
       return;
     }
-
     console.log("Starting high-accuracy location tracking...");
     try {
       locationSubscription.current = await Location.watchPositionAsync(
@@ -230,8 +232,6 @@ export default function WorkerDashboard() {
       setLocationError("Could not start location tracking.");
     }
   };
-
-  // --- Stop Location Tracking ---
   const stopLocationTracking = () => {
     if (locationSubscription.current) {
       console.log("Stopping location tracking.");
@@ -239,14 +239,11 @@ export default function WorkerDashboard() {
       locationSubscription.current = null;
     }
   };
-
-  // --- Send Location to Backend ---
   const sendLocationToBackend = async (
     currentWorkerId: string, 
     coords: Location.LocationObjectCoords
   ) => {
     if (!currentWorkerId) return;
-    
     try {
       await fetch(`${API_URL}/workers/${currentWorkerId}/update-location`, {
         method: 'POST',
@@ -261,8 +258,7 @@ export default function WorkerDashboard() {
       console.error("Failed to send location to backend:", error);
     }
   };
-
-  // (registerForPushNotificationsAsync function is unchanged)
+  // (registerForPushNotificationsAsync is unchanged)
   async function registerForPushNotificationsAsync(currentWorkerId: string) {
     let token;
     if (Platform.OS === 'android') {
@@ -296,9 +292,7 @@ export default function WorkerDashboard() {
       } catch (error) { console.error("Failed to save worker push token:", error); }
     }
   }
-  // ---
-
-  // (handlePickImage is unchanged)
+  // (handlePickImage, handleSaveProfile, handleClockToggle are unchanged)
   const handlePickImage = async () => {
     let result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
@@ -310,8 +304,6 @@ export default function WorkerDashboard() {
       Alert.alert("Success", "Profile picture updated. Press 'Save Profile' to apply.");
     }
   };
-
-  // (handleSaveProfile is unchanged)
   const handleSaveProfile = async () => {
     if (!workerId) return;
     setIsSaving(true);
@@ -338,8 +330,6 @@ export default function WorkerDashboard() {
       Alert.alert("Error", error.message || "Could not save your profile.");
     } finally { setIsSaving(false); }
   };
-
-  // --- MODIFIED: handleClockToggle now starts/stops location tracking ---
   const handleClockToggle = async () => {
     if (!workerId) return;
     const endpoint = clockedIn ? "clock-out" : "clock-in";
@@ -364,8 +354,7 @@ export default function WorkerDashboard() {
       }
     }
   };
-  
-  // (All date/price/status handlers are unchanged)
+  // (onDateTimeChange is unchanged)
   const onDateTimeChange = (event: any, date?: Date) => {
     if (Platform.OS === 'android') {
         setDateTimeModalVisible(false);
@@ -378,39 +367,88 @@ export default function WorkerDashboard() {
         }
     }
   };
+
+  // --- MODIFIED: handleScheduleJob now sets the priceBreakdown state ---
   const handleScheduleJob = (job: any) => {
     setCurrentJobToSchedule(job);
     const jobDate = new Date(job.date);
     const now = new Date();
     setSelectedDateTime(jobDate > now ? jobDate : now);
-    setPriceInput(job.workerPrice ? String(job.workerPrice) : '');
+
+    // If job already has a breakdown (e.g., re-proposing), load it.
+    // Else, start with one empty item.
+    const existingBreakdown = job.priceBreakdown;
+    if (existingBreakdown && existingBreakdown.length > 0) {
+      // Ensure price is a string for the input
+      setPriceBreakdown(existingBreakdown.map((item: any) => ({
+        item: item.item,
+        price: String(item.price) 
+      })));
+    } else {
+      // If it's an old job with just workerPrice, use that as the first item
+      if (job.workerPrice) {
+        setPriceBreakdown([{ item: 'Service Cost', price: String(job.workerPrice) }]);
+      } else {
+        setPriceBreakdown([{ item: '', price: '' }]);
+      }
+    }
+    
     setDateTimeModalVisible(true);
   };
+
+  // --- MODIFIED: handleConfirmSchedule now sends the full breakdown ---
   const handleConfirmSchedule = async () => {
     if (!currentJobToSchedule) return;
-    const price = parseFloat(priceInput);
-    if (isNaN(price) || price <= 0) {
-      Alert.alert("Invalid Price", "Please enter a valid price greater than zero.");
+
+    // 1. Validate and clean the breakdown
+    const cleanPriceBreakdown = priceBreakdown
+      .map(item => ({
+        item: item.item.trim(),
+        price: parseFloat(item.price)
+      }))
+      .filter(item => item.item && !isNaN(item.price) && item.price > 0);
+
+    // 2. Check for errors
+    if (cleanPriceBreakdown.length === 0) {
+      Alert.alert("Invalid Price", "Please add at least one valid item and price.");
       return;
     }
+    if (cleanPriceBreakdown.length !== priceBreakdown.length) {
+       Alert.alert("Invalid Item", "Please ensure all items have a description and a valid price greater than zero.");
+       return;
+    }
+
+    // 3. Send to backend (performStatusUpdate is now modified)
     await performStatusUpdate(
         currentJobToSchedule._id, 
         'price_pending', 
         selectedDateTime.toISOString(),
-        price
+        cleanPriceBreakdown // --- We now send the array ---
     );
+
     setDateTimeModalVisible(false);
     setCurrentJobToSchedule(null);
-    setPriceInput('');
+    setPriceBreakdown([{ item: '', price: '' }]); // Reset for next time
   };
-  const performStatusUpdate = async (appointmentId: string, status: string, newDate?: string, workerPrice?: number) => {
+
+  // --- MODIFIED: performStatusUpdate signature changed ---
+  const performStatusUpdate = async (
+    appointmentId: string, 
+    status: string, 
+    newDate?: string, 
+    priceBreakdown?: { item: string, price: number }[] // --- Changed from workerPrice to priceBreakdown ---
+  ) => {
     const payload: any = { status };
     if (newDate) payload.date = newDate;
-    if (workerPrice !== undefined) payload.workerPrice = workerPrice;
+    // --- MODIFIED: Add priceBreakdown to payload ---
+    if (priceBreakdown) {
+      payload.priceBreakdown = priceBreakdown;
+    }
     
+    // Optimistic update (simpler: just update status/date, let fetch handle price)
     const updatedAppointments = appointments.map(app => 
       app._id === appointmentId 
-        ? { ...app, status, date: newDate || app.date, workerPrice: workerPrice !== undefined ? workerPrice : app.workerPrice } 
+        ? { ...app, status, date: newDate || app.date } 
         : app
     );
     setAppointments(updatedAppointments);
@@ -422,14 +460,20 @@ export default function WorkerDashboard() {
         body: JSON.stringify(payload),
       });
       if (!response.ok) throw new Error(`Failed to update job status to ${status}.`);
+      
       if (status === 'en_route') Alert.alert("Success", "Customer has been notified you are on your way!");
       else if (status === 'completed') Alert.alert("Success", `Job status updated to ${status}.`);
-      if (workerId) await fetchAppointments(workerId);
+      
+      // Always refetch to get latest data from server (e.g., new totalPrice)
+      if (workerId) await fetchAppointments(workerId); 
     } catch (error: any) { 
       Alert.alert("Error", error.message || "Could not update job status."); 
-      if (workerId) await fetchAppointments(workerId);
+      // Rollback on error by refetching
+      if (workerId) await fetchAppointments(workerId); 
     }
   };
+
+  // (handleUpdateJobStatus is unchanged)
   const handleUpdateJobStatus = async (appointmentId: string, status: string, job?: any) => {
     if (status === 'en_route') {
       performStatusUpdate(appointmentId, status);
@@ -449,9 +493,7 @@ export default function WorkerDashboard() {
     }
     performStatusUpdate(appointmentId, status);
   };
-  // ---
-
-  // (handleLogout is unchanged)
+  // (handleLogout, getStatusColor, renderSkillModal are unchanged)
   const handleLogout = () => {
     Alert.alert("Confirm Logout", "Are you sure you want to log out?", [
       { text: "Cancel", style: "cancel" },
@@ -470,8 +512,6 @@ export default function WorkerDashboard() {
       }, style: "destructive" },
     ]);
   };
-  
-  // (getStatusColor is unchanged)
   const getStatusColor = (status: string) => {
     switch (status?.toLowerCase()) {
       case "pending": return colors.subText;
@@ -483,12 +523,11 @@ export default function WorkerDashboard() {
       default: return colors.subText;
     }
   };
-
-  // (renderSkillModal is unchanged)
   const renderSkillModal = () => (
     <Modal
       animationType="slide" transparent={true} visible={skillModalVisible}
-      onRequestClose={() => setSkillModalVisible(false)} >
+      onRequestClose={() => setSkillModalVisible(false)}
+    >
       <Pressable style={styles.modalBackdrop} onPress={() => setSkillModalVisible(false)}>
         <View style={[styles.modalContent, { backgroundColor: colors.cardBackground }]}>
           <Text style={[styles.modalTitle, { color: colors.text }]}>Select Your Service</Text>
@@ -505,8 +544,45 @@ export default function WorkerDashboard() {
       </Pressable>
     </Modal>
   );
+
+  // --- NEW: Helper functions to manage the price breakdown state ---
+  const handleBreakdownChange = (index: number, field: 'item' | 'price', value: string) => {
+    const newBreakdown = [...priceBreakdown];
+    // Allow only numbers and one decimal for price
+    if (field === 'price') {
+        if (/^\d*\.?\d*$/.test(value)) {
+           newBreakdown[index][field] = value;
+           setPriceBreakdown(newBreakdown);
+        }
+    } else {
+       newBreakdown[index][field] = value;
+       setPriceBreakdown(newBreakdown);
+    }
+  };
+
+  const addBreakdownItem = () => {
+    setPriceBreakdown([...priceBreakdown, { item: '', price: '' }]);
+  };
+
+  const removeBreakdownItem = (index: number) => {
+    if (priceBreakdown.length <= 1) {
+        // Don't remove the last item, just clear it
+        setPriceBreakdown([{ item: '', price: '' }]);
+        return;
+    }
+    const newBreakdown = priceBreakdown.filter((_, i) => i !== index);
+    setPriceBreakdown(newBreakdown);
+  };
+
+  // --- NEW: Calculate total price dynamically ---
+  const calculatedTotal = useMemo(() => {
+    return priceBreakdown.reduce((acc, item) => {
+        return acc + (parseFloat(item.price) || 0);
+    }, 0);
+  }, [priceBreakdown]);
+  // ---
   
-  // (renderDateTimeModal is unchanged)
+  // --- MODIFIED: renderDateTimeModal now shows the price breakdown UI ---
   const renderDateTimeModal = () => {
     if (!currentJobToSchedule) return null;
     return (
@@ -516,51 +592,84 @@ export default function WorkerDashboard() {
             visible={dateTimeModalVisible}
             onRequestClose={() => setDateTimeModalVisible(false)}
         >
-            <Pressable style={styles.modalBackdrop} onPress={() => setDateTimeModalVisible(false)}>
-                <Pressable style={[styles.dateTimeModalContent, { backgroundColor: colors.cardBackground }]}>
-                    <Text style={[styles.modalTitle, { color: colors.text, marginBottom: 10 }]}>Propose Price & Schedule</Text>
-                    <Text style={[styles.modalSubtitle, { color: colors.subText, marginBottom: 20, paddingHorizontal: 10 }]}>
-                        Set your price and confirm the best time for the <Text style={{fontWeight: 'bold', color: colors.text}}>{currentJobToSchedule.service}</Text> job.
-                    </Text>
-                    
-                    <Text style={[styles.inputLabel, { color: colors.text }]}>Proposed Price ($)</Text>
-                    <TextInput
-                        style={[styles.input, { backgroundColor: colors.background, color: colors.text, borderColor: colors.inputBorder, marginBottom: 20 }]}
-                        onChangeText={setPriceInput}
-                        value={priceInput}
-                        placeholder="Enter price..."
-                        keyboardType="numeric"
-                        placeholderTextColor={colors.subText}
-                    />
-                    <Text style={[styles.inputLabel, { color: colors.text }]}>Confirm Date and Time</Text>
-                    <DateTimePicker
-                        testID="dateTimePicker"
-                        value={selectedDateTime}
-                        mode="datetime"
-                        is24Hour={true}
-                        display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                        onChange={onDateTimeChange}
-                        minimumDate={new Date()}
-                        style={styles.datePicker}
-                        textColor={colors.text}
-                    />
-                    
-                    <View style={styles.modalActionButtons}>
-                        <TouchableOpacity 
-                            onPress={() => setDateTimeModalVisible(false)}
-                            style={[styles.modalButton, { backgroundColor: colors.inputBorder }]}
-                        >
-                            <Text style={[styles.statusButtonText, { color: colors.text }]}>Cancel</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity 
-                            onPress={handleConfirmSchedule}
-                            style={[styles.modalButton, { backgroundColor: colors.primaryButton }]}
-                        >
-                            <Text style={styles.statusButtonText}>Propose & Schedule</Text>
-                        </TouchableOpacity>
-                    </View>
+            <KeyboardAvoidingView 
+                behavior={Platform.OS === "ios" ? "padding" : "height"}
+                style={styles.modalBackdrop}
+            >
+                <Pressable style={styles.modalBackdrop} onPress={() => setDateTimeModalVisible(false)}>
+                    <Pressable style={[styles.dateTimeModalContent, { backgroundColor: colors.cardBackground }]}>
+                        <ScrollView contentContainerStyle={{width: '100%'}}>
+                            <Text style={[styles.modalTitle, { color: colors.text, marginBottom: 10 }]}>Propose Price & Schedule</Text>
+                            <Text style={[styles.modalSubtitle, { color: colors.subText, marginBottom: 20, paddingHorizontal: 10 }]}>
+                                Set your price quotation and confirm the time for the <Text style={{fontWeight: 'bold', color: colors.text}}>{currentJobToSchedule.service}</Text> job.
+                            </Text>
+                            
+                            {/* --- NEW: Price Breakdown List --- */}
+                            <Text style={[styles.inputLabel, { color: colors.text }]}>Price Quotation</Text>
+                            {priceBreakdown.map((item, index) => (
+                                <View key={index} style={styles.breakdownItem}>
+                                    <TextInput
+                                        style={[styles.breakdownInput, styles.breakdownItemName, { backgroundColor: colors.background, color: colors.text, borderColor: colors.inputBorder }]}
+                                        placeholder="Item (e.g., Labor, Materials)"
+                                        placeholderTextColor={colors.subText}
+                                        value={item.item}
+                                        onChangeText={(text) => handleBreakdownChange(index, 'item', text)}
+                                    />
+                                    <TextInput
+                                        style={[styles.breakdownInput, styles.breakdownItemPrice, { backgroundColor: colors.background, color: colors.text, borderColor: colors.inputBorder }]}
+                                        placeholder="Price ($)"
+                                        placeholderTextColor={colors.subText}
+                                        value={item.price}
+                                        onChangeText={(text) => handleBreakdownChange(index, 'price', text)}
+                                        keyboardType="numeric"
+                                    />
+                                    <TouchableOpacity onPress={() => removeBreakdownItem(index)} style={styles.removeButton}>
+                                        <Ionicons name="remove-circle" size={24} color="#ef4444" />
+                                    </TouchableOpacity>
+                                </View>
+                            ))}
+                            <TouchableOpacity onPress={addBreakdownItem} style={[styles.addButton, {borderColor: colors.primaryButton}]}>
+                                <Ionicons name="add" size={20} color={colors.primaryButton} />
+                                <Text style={[styles.addButtonText, {color: colors.primaryButton}]}>Add Item</Text>
+                            </TouchableOpacity>
+
+                            <View style={styles.totalContainer}>
+                                <Text style={[styles.totalText, {color: colors.text}]}>Total:</Text>
+                                <Text style={[styles.totalAmount, {color: colors.text}]}>${calculatedTotal.toFixed(2)}</Text>
+                            </View>
+                            {/* --- END: Price Breakdown List --- */}
+
+                            <Text style={[styles.inputLabel, { color: colors.text, marginTop: 20 }]}>Confirm Date and Time</Text>
+                            <DateTimePicker
+                                testID="dateTimePicker"
+                                value={selectedDateTime}
+                                mode="datetime"
+                                is24Hour={true}
+                                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                                onChange={onDateTimeChange}
+                                minimumDate={new Date()}
+                                style={styles.datePicker}
+                                textColor={colors.text}
+                            />
+                        </ScrollView>
+                        
+                        <View style={styles.modalActionButtons}>
+                            <TouchableOpacity 
+                                onPress={() => setDateTimeModalVisible(false)}
+                                style={[styles.modalButton, { backgroundColor: colors.inputBorder }]}
+                            >
+                                <Text style={[styles.statusButtonText, { color: colors.text }]}>Cancel</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity 
+                                onPress={handleConfirmSchedule}
+                                style={[styles.modalButton, { backgroundColor: colors.primaryButton }]}
+                            >
+                                <Text style={styles.statusButtonText}>Propose & Schedule</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </Pressable>
                 </Pressable>
-            </Pressable>
+            </KeyboardAvoidingView>
         </Modal>
     );
   };
@@ -645,7 +754,7 @@ export default function WorkerDashboard() {
             <Text style={styles.saveButtonText}>{isSaving ? "Saving..." : "Save Profile"}</Text>
         </TouchableOpacity>
 
-        {/* --- Map shows high-accuracy location --- */}
+        {/* Map */}
         <Text style={[styles.subHeader, { color: colors.text }]}>Current Location</Text>
         <View style={styles.mapContainer}>
           {location ? (
@@ -670,8 +779,8 @@ export default function WorkerDashboard() {
             </View>
           )}
         </View>
-        {/* --- */}
-
+        
+        {/* Jobs List */}
         <Text style={[styles.subHeader, { color: colors.text }]}>My Jobs</Text>
         {appointments.length > 0 ? appointments.map((job) => (
           <View key={job._id} style={[styles.jobCard, { backgroundColor: colors.cardBackground, borderColor: colors.inputBorder }]}>
@@ -684,9 +793,23 @@ export default function WorkerDashboard() {
             <Text style={[styles.jobAddress, { color: colors.text, fontWeight: 'bold' }]}>{job.service}</Text>
             <Text style={[styles.jobAddress, { color: colors.text }]}>Client: {job.customer?.name || 'Loading...'}</Text>
             
-            <Text style={[styles.jobAddress, { color: job.workerPrice ? colors.primaryButton : colors.subText, fontWeight: '700' }]}>
-                Price: {job.workerPrice ? `$${job.workerPrice.toFixed(2)}` : 'Awaiting Proposal'}
+            {/* --- MODIFIED: Show total price from 'totalPrice' field --- */}
+            <Text style={[styles.jobAddress, { color: job.totalPrice ? colors.primaryButton : colors.subText, fontWeight: '700' }]}>
+                Price: {job.totalPrice ? `$${job.totalPrice.toFixed(2)}` : 'Awaiting Proposal'}
             </Text>
+            
+            {/* --- NEW: Show price breakdown if it exists --- */}
+            {job.priceBreakdown && job.priceBreakdown.length > 0 && (
+                <View style={[styles.breakdownBox, {borderColor: colors.inputBorder}]}>
+                    <Text style={[styles.breakdownTitle, {color: colors.text}]}>Price Breakdown:</Text>
+                    {job.priceBreakdown.map((item: any, index: number) => (
+                        <View key={index} style={styles.breakdownRow}>
+                            <Text style={[styles.breakdownItemText, {color: colors.subText}]}>{item.item}</Text>
+                            <Text style={[styles.breakdownItemText, {color: colors.subText}]}>${item.price.toFixed(2)}</Text>
+                        </View>
+                    ))}
+                </View>
+            )}
             
             <Text style={[styles.jobAddress, { color: colors.text, marginTop: 4 }]}>Address: {job.address}</Text>
             <Text style={[styles.jobDescription, { color: colors.subText }]}>Description: {job.description}</Text>
@@ -775,15 +898,13 @@ const styles = StyleSheet.create({
   slider: { width: '100%', height: 40, },
   saveButton: { padding: 16, borderRadius: 12, alignItems: 'center', marginTop: 20, marginHorizontal: 10 },
   saveButtonText: { color: 'white', fontSize: 16, fontWeight: 'bold' },
-  
-  // --- MODIFIED: Map Styles ---
   mapContainer: {
     width: "100%", 
     height: 250, 
     borderRadius: 10, 
     marginBottom: 20,
-    overflow: 'hidden', // Ensures map stays in bounds
-    backgroundColor: '#f0f0f0', // For loading state
+    overflow: 'hidden', 
+    backgroundColor: '#f0f0f0', 
   },
   map: { 
     ...StyleSheet.absoluteFillObject,
@@ -794,36 +915,98 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   loadingText: { textAlign: "center", fontStyle: "italic", paddingVertical: 30 },
-  // ---
-  
   jobCard: { borderRadius: 12, padding: 15, marginVertical: 6, borderWidth: 1, shadowOpacity: 0.1, shadowRadius: 3, shadowOffset: { width: 0, height: 1 }, elevation: 2 },
   jobRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 },
   jobTime: { fontSize: 16, fontWeight: "700" },
   jobAddress: { fontSize: 14, marginVertical: 2 },
   jobDescription: { fontSize: 12, fontStyle: 'italic', marginVertical: 4 },
-  workerNotes: { 
-    fontSize: 13,
-    fontStyle: 'italic',
-    fontWeight: '600',
-    marginTop: 8,
-    padding: 8,
-    borderWidth: 1,
-    borderRadius: 6,
-  },
   jobStatus: { fontSize: 14, fontWeight: "600", textTransform: 'capitalize' },
   statusActions: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: 10, gap: 10, flexWrap: 'wrap' }, 
   statusButton: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8, alignItems: 'center' },
   statusButtonText: { color: 'white', fontWeight: 'bold' },
   modalBackdrop: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)', },
   modalContent: { width: '90%', maxHeight: '70%', borderRadius: 20, padding: 20, overflow: 'hidden' },
-  dateTimeModalContent: { width: '90%', maxWidth: 400, borderRadius: 12, padding: 20, alignItems: 'center' },
-  datePicker: { width: '100%', height: 200 }, 
+  dateTimeModalContent: { width: '90%', maxWidth: 400, maxHeight: '85%', borderRadius: 12, padding: 20, alignItems: 'center' }, // --- MODIFIED: Added maxHeight ---
+  datePicker: { width: '100%', height: 150 }, // --- MODIFIED: Reduced height ---
   modalSubtitle: { fontSize: 14, textAlign: 'center' },
-  selectedDateTimeText: { fontSize: 16, fontWeight: 'bold' },
   modalActionButtons: { flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginTop: 20, gap: 10 },
   modalButton: { flex: 1, paddingVertical: 10, paddingHorizontal: 12, borderRadius: 8, alignItems: 'center' },
   modalTitle: { fontSize: 20, fontWeight: 'bold', textAlign: 'center', marginBottom: 20, },
   modalOption: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 15, borderBottomWidth: 1, },
   modalOptionText: { fontSize: 16, },
+  
+  // --- NEW STYLES for Price Breakdown ---
+  breakdownItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  breakdownInput: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    fontSize: 14,
+    borderWidth: 1,
+  },
+  breakdownItemName: {
+    flex: 3, // Takes more space
+    marginRight: 8,
+  },
+  breakdownItemPrice: {
+    flex: 1.5, // Takes less space
+    marginRight: 8,
+  },
+  removeButton: {
+    padding: 4,
+  },
+  addButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    marginTop: 5,
+  },
+  addButtonText: {
+    marginLeft: 5,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  totalContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 15,
+    paddingTop: 15,
+    borderTopWidth: 1,
+    borderColor: '#e0e0e0'
+  },
+  totalText: {
+    fontSize: 18,
+    fontWeight: '500',
+  },
+  totalAmount: {
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  breakdownBox: {
+    marginTop: 10,
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  breakdownTitle: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    marginBottom: 5,
+  },
+  breakdownRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 2,
+  },
+  breakdownItemText: {
+    fontSize: 14,
+  }
 });
-

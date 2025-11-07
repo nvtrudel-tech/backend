@@ -462,7 +462,13 @@ export default function ElectricianAppView() {
     const appointmentId = jobToNegotiate._id;
     const payload: any = { status };
     payload.date = jobToNegotiate.date; 
-    payload.workerPrice = jobToNegotiate.workerPrice;
+    
+    // --- MODIFICATION: Send price breakdown, not workerPrice ---
+    // We send the *existing* breakdown back to the server when confirming/rejecting
+    // to ensure the 'confirmed' status notification has the correct price data.
+    payload.priceBreakdown = jobToNegotiate.priceBreakdown;
+    // ---
+
     try {
       const response = await fetch(`${API_URL}/appointments/${appointmentId}`, {
           method: 'PUT',
@@ -487,7 +493,7 @@ export default function ElectricianAppView() {
   };
   // ---
 
-  // (All render functions are unchanged)
+  // (renderCancelModal is unchanged)
   const renderCancelModal = () => {
     if (!appointmentToCancel) return null;
     const isNegotiation = appointmentToCancel.status === 'confirmed' || appointmentToCancel.status === 'price_pending';
@@ -559,9 +565,12 @@ export default function ElectricianAppView() {
     );
   };
   
+  // --- MODIFIED: renderNegotiationModal to show full breakdown ---
   const renderNegotiationModal = () => {
     if (!jobToNegotiate) return null;
-    const proposedPrice = jobToNegotiate.workerPrice ? `$${jobToNegotiate.workerPrice.toFixed(2)}` : 'N/A';
+    
+    // Use totalPrice from the job object, which is calculated on the backend
+    const proposedPrice = jobToNegotiate.totalPrice ? `$${jobToNegotiate.totalPrice.toFixed(2)}` : 'N/A';
     const proposedDate = new Date(jobToNegotiate.date).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
     const proposedTime = new Date(jobToNegotiate.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
@@ -574,54 +583,76 @@ export default function ElectricianAppView() {
       >
         <Pressable style={styles.modalBackdrop} onPress={() => setIsNegotiationModalVisible(false)}>
           <Pressable style={[styles.modalContent, { backgroundColor: colors.cardBackground }]}>
-            <Text style={[styles.modalTitle, { color: colors.text }]}>{t('negotiation.reviewTitle')}</Text>
-            <Text style={[styles.modalMessage, { color: colors.text, fontWeight: 'bold' }]}>
-              {jobToNegotiate.service} Job
-            </Text>
-            <View style={styles.proposalDetail}>
-              <Text style={[styles.proposalLabel, { color: colors.subText }]}>{t('negotiation.price')}</Text>
-              <Text style={[styles.proposalValue, { color: colors.primaryButton }]}>{proposedPrice}</Text>
-            </View>
-            <View style={styles.proposalDetail}>
-              <Text style={[styles.proposalLabel, { color: colors.subText }]}>{t('negotiation.dateTime')}</Text>
-              <Text style={[styles.proposalValue, { color: colors.text }]}>{proposedDate} at {proposedTime}</Text>
-            </View>
-
-            <Text style={[styles.modalMessage, { color: colors.subText, fontSize: 14, marginTop: 15 }]}>
-              {t('negotiation.prompt')}
-            </Text>
-
-            <View style={styles.modalButtonContainer}>
-              <TouchableOpacity
-                style={[styles.modalButtonSmall, { backgroundColor: '#10b981', flex: 2 }]}
-                onPress={() => handleNegotiationAction('confirmed')}
-                disabled={isUpdatingStatus}
-              >
-                {isUpdatingStatus ? <ActivityIndicator color="#fff" /> : <Text style={styles.modalButtonText}>{t('negotiation.accept')}</Text>}
-              </TouchableOpacity>
+            <ScrollView>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>{t('negotiation.reviewTitle')}</Text>
+              <Text style={[styles.modalMessage, { color: colors.text, fontWeight: 'bold' }]}>
+                {jobToNegotiate.service} Job
+              </Text>
               
-              <TouchableOpacity
-                style={[styles.modalButtonSmall, { backgroundColor: colors.inputBorder }]}
-                onPress={() => handleNegotiationAction('pending')}
-                disabled={isUpdatingStatus}
-              >
-                {isUpdatingStatus ? <ActivityIndicator color="#fff" /> : <Text style={[styles.modalButtonText, { color: colors.text }]}>{t('negotiation.reject')}</Text>}
-              </TouchableOpacity>
+              <View style={styles.proposalDetail}>
+                <Text style={[styles.proposalLabel, { color: colors.subText }]}>{t('negotiation.dateTime')}</Text>
+                <Text style={[styles.proposalValue, { color: colors.text, flexShrink: 1, textAlign: 'right' }]}>{proposedDate} at {proposedTime}</Text>
+              </View>
+              
+              {/* --- NEW: Show Price Breakdown --- */}
+              {jobToNegotiate.priceBreakdown && jobToNegotiate.priceBreakdown.length > 0 && (
+                <View style={[styles.priceBreakdownBox, { borderColor: colors.inputBorder, marginTop: 15, padding: 10, borderWidth: 1, borderRadius: 8 }]}>
+                  <Text style={[styles.priceBreakdownTitle, { color: colors.text }]}>
+                    {t('home.priceBreakdown', 'Price Breakdown')}:
+                  </Text>
+                  {jobToNegotiate.priceBreakdown.map((item: any, index: number) => (
+                    <View key={index} style={styles.priceBreakdownRow}>
+                      <Text style={[styles.priceBreakdownItemText, { color: colors.subText }]}>{item.item}</Text>
+                      <Text style={[styles.priceBreakdownItemText, { color: colors.subText }]}>${item.price.toFixed(2)}</Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+              {/* --- END: Show Price Breakdown --- */}
 
-              <TouchableOpacity
-                style={[styles.modalButtonSmall, { backgroundColor: '#ef4444' }]}
-                onPress={() => handleNegotiationAction('cancelled')}
-                disabled={isUpdatingStatus}
-              >
-                {isUpdatingStatus ? <ActivityIndicator color="#fff" /> : <Text style={styles.modalButtonText}>{t('negotiation.cancel')}</Text>}
-              </TouchableOpacity>
-            </View>
+              <View style={[styles.proposalDetail, {marginTop: 10, borderTopWidth: 2, borderTopColor: colors.inputBorder, paddingTop: 10}]}>
+                <Text style={[styles.proposalLabel, { color: colors.subText, fontSize: 18 }]}>{t('negotiation.totalPrice', 'Total Price')}</Text>
+                <Text style={[styles.proposalValue, { color: colors.primaryButton, fontSize: 18 }]}>{proposedPrice}</Text>
+              </View>
+
+              <Text style={[styles.modalMessage, { color: colors.subText, fontSize: 14, marginTop: 15 }]}>
+                {t('negotiation.prompt')}
+              </Text>
+
+              <View style={styles.modalButtonContainer}>
+                <TouchableOpacity
+                  style={[styles.modalButtonSmall, { backgroundColor: '#10b981', flex: 2 }]}
+                  onPress={() => handleNegotiationAction('confirmed')}
+                  disabled={isUpdatingStatus}
+                >
+                  {isUpdatingStatus ? <ActivityIndicator color="#fff" /> : <Text style={styles.modalButtonText}>{t('negotiation.accept')}</Text>}
+                </TouchableOpacity>
+                
+                <TouchableOpacity
+                  style={[styles.modalButtonSmall, { backgroundColor: colors.inputBorder }]}
+                  onPress={() => handleNegotiationAction('pending')}
+                  disabled={isUpdatingStatus}
+                >
+                  {isUpdatingStatus ? <ActivityIndicator color="#fff" /> : <Text style={[styles.modalButtonText, { color: colors.text }]}>{t('negotiation.reject')}</Text>}
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.modalButtonSmall, { backgroundColor: '#ef4444' }]}
+                  onPress={() => handleNegotiationAction('cancelled')}
+                  disabled={isUpdatingStatus}
+                >
+                  {isUpdatingStatus ? <ActivityIndicator color="#fff" /> : <Text style={styles.modalButtonText}>{t('negotiation.cancel')}</Text>}
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
           </Pressable>
         </Pressable>
       </Modal>
     );
   };
+  // ---
 
+  // --- MODIFIED: renderMyAppointments to show price breakdown ---
   const renderMyAppointments = () => {
     if (!isLoggedIn) return null;
     if (isLoadingAppts) {
@@ -641,7 +672,7 @@ export default function ElectricianAppView() {
     const getStatusText = (app: any) => {
       const status = app.status;
       if (status === 'price_pending') {
-        const price = app.workerPrice ? app.workerPrice.toFixed(2) : '...';
+        const price = app.totalPrice ? app.totalPrice.toFixed(2) : '...';
         return t('status.price_pending', { price: `$${price}` });
       }
       if (status === 'en_route') {
@@ -667,6 +698,28 @@ export default function ElectricianAppView() {
                 <Text style={[styles.appointmentWorker, { color: colors.subText }]}>
                   {t('home.specialist')}: {app.worker?.name || 'Assigning...'}
                 </Text>
+                
+                {/* --- NEW: Show Total Price --- */}
+                <Text style={[styles.appointmentTotal, { color: app.totalPrice ? colors.primaryButton : colors.subText }]}>
+                  {t('home.price', 'Price')}: {app.totalPrice ? `$${app.totalPrice.toFixed(2)}` : t('status.pending', 'Pending')}
+                </Text>
+                
+                {/* --- NEW: Show Price Breakdown --- */}
+                {app.priceBreakdown && app.priceBreakdown.length > 0 && (
+                  <View style={[styles.priceBreakdownBox, { borderTopColor: colors.inputBorder }]}>
+                    <Text style={[styles.priceBreakdownTitle, { color: colors.text }]}>
+                      {t('home.priceBreakdown', 'Price Breakdown')}:
+                    </Text>
+                    {app.priceBreakdown.map((item: any, index: number) => (
+                      <View key={index} style={styles.priceBreakdownRow}>
+                        <Text style={[styles.priceBreakdownItemText, { color: colors.subText }]}>{item.item}</Text>
+                        <Text style={[styles.priceBreakdownItemText, { color: colors.subText }]}>${item.price.toFixed(2)}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+                {/* --- END: Show Price Breakdown --- */}
+
                  <Text style={[styles.appointmentStatus, { color: getStatusColor(app.status) }]}>
                   {t('home.status')}: {getStatusText(app)}
                 </Text>
@@ -692,6 +745,7 @@ export default function ElectricianAppView() {
       </View>
     );
   };
+  // ---
   
   // (renderWorkerMarkers function is unchanged)
   const renderWorkerMarkers = () => {
@@ -722,7 +776,7 @@ export default function ElectricianAppView() {
   };
   // ---
 
-  // --- Main Render ---
+  // --- Main Render (unchanged) ---
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
       {renderCancelModal()}
@@ -1077,6 +1131,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
     shadowRadius: 4,
+    maxHeight: '85%', // --- MODIFIED: Added for scrollview in modal ---
   },
   modalTitle: {
     fontSize: 22,
@@ -1128,6 +1183,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#eee',
     marginHorizontal: 10,
+    alignItems: 'center', // --- MODIFIED: Added ---
   },
   proposalLabel: {
     fontSize: 15,
@@ -1182,10 +1238,16 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontStyle: 'italic',
   },
+  // --- NEW STYLE ---
+  appointmentTotal: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    marginVertical: 3,
+  },
   appointmentStatus: {
     fontSize: 13,
     fontWeight: '500',
-    marginTop: 4,
+    marginTop: 8, // --- MODIFIED: Increased margin ---
     textTransform: 'capitalize',
   },
   actionButton: {
@@ -1207,5 +1269,25 @@ const styles = StyleSheet.create({
     color: '#ef4444',
     fontWeight: 'bold',
     fontSize: 14,
-  }    
+  },
+  
+  // --- NEW STYLES for Price Breakdown in Card/Modal ---
+  priceBreakdownBox: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+  },
+  priceBreakdownTitle: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    marginBottom: 5,
+  },
+  priceBreakdownRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 2,
+  },
+  priceBreakdownItemText: {
+    fontSize: 13,
+  }
 });
