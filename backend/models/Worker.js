@@ -1,5 +1,12 @@
 const mongoose = require("mongoose");
 
+// This is the availability sub-schema from your routes
+const availabilitySchema = new mongoose.Schema({
+  start: { type: String, default: '09:00' },
+  end: { type: String, default: '17:00' },
+  available: { type: Boolean, default: false }
+}, { _id: false });
+
 const workerSchema = new mongoose.Schema(
   {
     // --- Link to Auth User (from your new schema) ---
@@ -39,13 +46,13 @@ const workerSchema = new mongoose.Schema(
 
     // --- Availability (from new schema) ---
     availability: {
-      monday: { start: String, end: String, available: Boolean },
-      tuesday: { start: String, end: String, available: Boolean },
-      wednesday: { start: String, end: String, available: Boolean },
-      thursday: { start: String, end: String, available: Boolean },
-      friday: { start: String, end: String, available: Boolean },
-      saturday: { start: String, end: String, available: Boolean },
-      sunday: { start: String, end: String, available: Boolean },
+      monday: availabilitySchema,
+      tuesday: availabilitySchema,
+      wednesday: availabilitySchema,
+      thursday: availabilitySchema,
+      friday: availabilitySchema,
+      saturday: availabilitySchema,
+      sunday: availabilitySchema,
     },
 
     // --- Clock (from new schema, matches your routes file) ---

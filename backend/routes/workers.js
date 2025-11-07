@@ -2,7 +2,46 @@ const express = require("express");
 const Worker = require("../models/Worker"); // Adjust path as needed
 const router = express.Router();
 
-// --- NEW ROUTE: CREATE A NEW WORKER PROFILE ---
+// --- NEW ROUTE: FIND NEARBY CLOCKED-IN WORKERS ---
+// This is the route your customer app will call
+router.get("/nearby", async (req, res) => {
+  const { latitude, longitude, radius = 5000 } = req.query; // Default 5km radius
+
+  if (!latitude || !longitude) {
+    return res.status(400).json({ msg: "Latitude and longitude are required." });
+  }
+
+  const userLng = parseFloat(longitude);
+  const userLat = parseFloat(latitude);
+  const maxDistance = parseInt(radius);
+
+  try {
+    const nearbyWorkers = await Worker.find({
+      // 1. Query for location
+      currentLocation: {
+        $near: {
+          $geometry: {
+            type: "Point",
+            coordinates: [userLng, userLat], // [lng, lat]
+          },
+          $maxDistance: maxDistance, // Max distance in meters
+        },
+      },
+      // 2. Filter for workers who are "clocked in"
+      "currentClock.clockedIn": true,
+    });
+
+    res.status(200).json(nearbyWorkers);
+
+  } catch (err) {
+    console.error("Find nearby workers error:", err);
+    res.status(500).json({ success: false, msg: err.message });
+  }
+});
+// --- END NEW ROUTE ---
+
+
+// --- CREATE A NEW WORKER PROFILE ---
 // This is called from Signup.js when role is 'specialist'
 router.post("/", async (req, res) => {
   const { name, email, phone, authId } = req.body;

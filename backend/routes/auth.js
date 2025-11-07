@@ -1,5 +1,6 @@
 const express = require("express");
 const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken"); // <-- 1. ADDED: Import JWT package
 const User = require("../models/User"); // Adjust path as needed
 const router = express.Router();
 
@@ -18,7 +19,7 @@ router.post("/signup", async (req, res) => {
     // Note: The User model pre-save hook will hash the password
     const user = new User({ name, email, phone, password, role });
     await user.save();
-    
+
     // Don't send password back
     const safeUser = {
       _id: user._id,
@@ -28,8 +29,19 @@ router.post("/signup", async (req, res) => {
       role: user.role,
       profileImageBase64: user.profileImageBase64,
     };
+    
+    // --- 2. ADDED: Create JWT for new user ---
+    const payload = { user: { id: user.id, role: user.role } };
+    const token = jwt.sign(
+      payload, 
+      process.env.JWT_SECRET, // Make sure JWT_SECRET is in Render
+      { expiresIn: '30d' }
+    );
+    // ---
 
-    res.status(201).json({ success: true, user: safeUser });
+    // 3. MODIFIED: Send back the token AND the user
+    res.status(201).json({ success: true, token, user: safeUser });
+
   } catch (err) {
     console.error("Signup error:", err);
     res.status(500).json({ success: false, msg: err.message });
@@ -56,16 +68,28 @@ router.post("/login", async (req, res) => {
       role: user.role,
       profileImageBase64: user.profileImageBase64, // Include profile image
     };
+    
+    // --- 4. ADDED: Create the JWT "ID Card" ---
+    const payload = { user: { id: user.id, role: user.role } };
+    const token = jwt.sign(
+      payload, 
+      process.env.JWT_SECRET, // Make sure JWT_SECRET is in Render
+      { expiresIn: '30d' }
+    );
+    // ---
 
-    res.status(200).json({ success: true, user: safeUser });
-  } catch (err)
- {
+    // 5. MODIFIED: Send the token back to the app
+    res.status(200).json({ success: true, token, user: safeUser });
+
+  } catch (err) {
     console.error("Login error:", err);
     res.status(500).json({ success: false, msg: err.message });
   }
 });
 
 // --- GET USER DETAILS FOR PROFILE SCREEN ---
+// NOTE: This route is INSECURE without authentication middleware.
+// An attacker could guess user IDs and steal data.
 router.get("/user/:id", async (req, res) => {
   try {
     const user = await User.findById(req.params.id).select("-password"); // Find user, exclude password
@@ -80,6 +104,8 @@ router.get("/user/:id", async (req, res) => {
 });
 
 // --- UPDATE USER PROFILE ---
+// NOTE: This route is INSECURE without authentication middleware.
+// An attacker could change any user's profile.
 router.put("/user/:id", async (req, res) => {
   try {
     const { name, email, phone, profileImageBase64 } = req.body;
@@ -110,7 +136,7 @@ router.put("/user/:id", async (req, res) => {
 
 
 // --- SAVE CUSTOMER PUSH TOKEN ---
-// (This is already called from your index.js)
+// NOTE: This route is INSECURE without authentication middleware.
 router.post("/save-push-token", async (req, res) => {
   const { userId, token } = req.body;
 
@@ -139,4 +165,3 @@ router.post("/save-push-token", async (req, res) => {
 // ---
 
 module.exports = router;
-
