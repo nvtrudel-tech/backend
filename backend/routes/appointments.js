@@ -3,12 +3,18 @@ const Appointment = require("../models/Appointment");
 const Worker = require("../models/Worker"); // Import Worker model
 const User = require("../models/User"); // Import User model
 const router = express.Router();
+const { Expo } = require('expo-server-sdk'); // --- IMPORT THE SDK ---
 
-// --- Helper function to send push notifications ---
+// --- Helper function to send push notifications (NEW VERSION) ---
+// Create a new Expo client
+const expo = new Expo();
+
 const sendPushNotification = async (expoPushToken, title, body) => {
-  if (!expoPushToken || !expoPushToken.startsWith('ExponentPushToken[')) {
-    return console.log(`Invalid or missing push token: ${expoPushToken}. Cannot send notification.`);
+  // Use the SDK's built-in validator
+  if (!Expo.isExpoPushToken(expoPushToken)) {
+    return console.log(`Invalid push token: ${expoPushToken}. Cannot send notification.`);
   }
+
   const message = {
     to: expoPushToken,
     sound: 'default',
@@ -16,19 +22,16 @@ const sendPushNotification = async (expoPushToken, title, body) => {
     body: body,
     data: { screen: 'home' }, 
   };
+
   try {
-    await fetch('https://exp.host/--/api/v2/push/send', {
-      method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        'Accept-encoding': 'gzip, deflate',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(message),
-    });
-    console.log(`Push notification sent successfully to ${expoPushToken}.`);
+    // Send the notification using the SDK
+    // sendPushNotificationsAsync expects an array of messages
+    const ticket = await expo.sendPushNotificationsAsync([message]);
+    console.log(`Push notification ticket (1st chunk):`, ticket);
+    // You can add logic here to check for errors in the 'ticket' response
+    // For example, ticket[0].status === 'error'
   } catch (error) {
-    console.error("Error sending push notification:", error);
+    console.error("Error sending push notification with SDK:", error);
   }
 };
 // ---
@@ -78,6 +81,7 @@ Date: ${appointmentDate} at ${appointmentTime}
 Address: ${address}
 Job Description: ${description}`;
 
+        // This call will now use the new SDK function
         await sendPushNotification(
           bookedWorker.expoPushToken,
           `NEW BOOKING: ${service} Job (Pending Price)`, 
@@ -115,7 +119,7 @@ router.put("/:id", async (req, res) => {
     const updateFields = { status };
     if (date) updateFields.date = date; 
     
-    // --- MODIFIED PRICE LOGIC ---
+    // --- MODIFIED PRICE LOGIC (Copied from your code) ---
     let newTotalPrice = 0; // Default to 0
 
     if (priceBreakdown && Array.isArray(priceBreakdown) && priceBreakdown.length > 0) {
@@ -141,7 +145,7 @@ router.put("/:id", async (req, res) => {
       return res.status(400).json({ msg: "A price breakdown is required to propose a price." });
     }
     
-    // --- THIS IS THE CRITICAL FIX ---
+    // --- THIS IS THE CRITICAL FIX (Copied from your code) ---
     // Always set totalPrice and workerPrice, even if they are 0.
     // This prevents "null" from being saved to the database.
     updateFields.totalPrice = newTotalPrice;
@@ -189,6 +193,7 @@ router.put("/:id", async (req, res) => {
         }
         
         if (notificationTitle) {
+           // This call will now use the new SDK function
            await sendPushNotification(
               appointment.customer.expoPushToken,
               notificationTitle,
@@ -221,6 +226,7 @@ router.put("/:id", async (req, res) => {
          
          if (workerNotificationTitle) {
              try {
+                  // This call will now use the new SDK function
                   await sendPushNotification(
                       appointment.worker.expoPushToken,
                       workerNotificationTitle,
@@ -247,6 +253,7 @@ router.put("/:id", async (req, res) => {
          
          if (workerNotificationTitle) {
              try {
+                  // This call will now use the new SDK function
                   await sendPushNotification(
                       appointment.worker.expoPushToken,
                       workerNotificationTitle,
