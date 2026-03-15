@@ -7,24 +7,20 @@ import {
   FlatList,
   KeyboardAvoidingView,
   Platform,
-  SafeAreaView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { socket } from "../../backend/lib/socket";
 
 const API_URL = "https://backend-tknm.onrender.com/api";
 
 export default function AppointmentChatScreen() {
   const router = useRouter();
-  const { appointmentId, otherUserId, otherUserName } = useLocalSearchParams<{
-    appointmentId: string;
-    otherUserId: string;
-    otherUserName: string;
-  }>();
+  const params = useLocalSearchParams();
 
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [messages, setMessages] = useState<any[]>([]);
@@ -34,20 +30,25 @@ export default function AppointmentChatScreen() {
 
   const flatListRef = useRef<FlatList>(null);
 
-  const safeAppointmentId = useMemo(
-    () => (Array.isArray(appointmentId) ? appointmentId[0] : appointmentId),
-    [appointmentId]
-  );
+  const appointmentId = useMemo(() => {
+    const value = params.appointmentId;
+    return Array.isArray(value) ? value[0] : value;
+  }, [params.appointmentId]);
 
-  const safeOtherUserId = useMemo(
-    () => (Array.isArray(otherUserId) ? otherUserId[0] : otherUserId),
-    [otherUserId]
-  );
+  const otherUserId = useMemo(() => {
+    const value = params.otherUserId;
+    return Array.isArray(value) ? value[0] : value;
+  }, [params.otherUserId]);
 
-  const safeOtherUserName = useMemo(
-    () => (Array.isArray(otherUserName) ? otherUserName[0] : otherUserName),
-    [otherUserName]
-  );
+  const otherUserName = useMemo(() => {
+    const value = params.otherUserName;
+    return Array.isArray(value) ? value[0] : value;
+  }, [params.otherUserName]);
+
+  const selfUserId = useMemo(() => {
+    const value = params.selfUserId;
+    return Array.isArray(value) ? value[0] : value;
+  }, [params.selfUserId]);
 
   useEffect(() => {
     let mounted = true;
@@ -60,12 +61,12 @@ export default function AppointmentChatScreen() {
         if (!mounted) return;
         setCurrentUser(parsedUser);
 
-        if (!parsedUser?._id || !safeAppointmentId) {
+        if (!parsedUser?._id || !appointmentId) {
           setLoading(false);
           return;
         }
 
-        const convRes = await fetch(`${API_URL}/chat/conversation/${safeAppointmentId}`, {
+        const convRes = await fetch(`${API_URL}/chat/conversation/${appointmentId}`, {
           method: "POST",
         });
 
@@ -73,7 +74,7 @@ export default function AppointmentChatScreen() {
           throw new Error("This chat is not available.");
         }
 
-        const msgRes = await fetch(`${API_URL}/chat/messages/${safeAppointmentId}`);
+        const msgRes = await fetch(`${API_URL}/chat/messages/${appointmentId}`);
         if (!msgRes.ok) {
           throw new Error("Failed to load messages.");
         }
@@ -84,15 +85,13 @@ export default function AppointmentChatScreen() {
         setMessages(Array.isArray(data) ? data : []);
 
         socket.emit("join_conversation", {
-          appointmentId: safeAppointmentId,
-          userId: parsedUser._id,
+          appointmentId: String(appointmentId),
+          userId: String(selfUserId || parsedUser._id),
         });
       } catch (error) {
         console.error("Chat init error:", error);
       } finally {
-        if (mounted) {
-          setLoading(false);
-        }
+        if (mounted) setLoading(false);
       }
     };
 
@@ -104,7 +103,7 @@ export default function AppointmentChatScreen() {
           ? message?.appointment?._id
           : message?.appointment;
 
-      if (String(msgAppointmentId) !== String(safeAppointmentId)) return;
+      if (String(msgAppointmentId) !== String(appointmentId)) return;
 
       setMessages((prev) => {
         const exists = prev.some((m) => String(m._id) === String(message._id));
@@ -123,40 +122,66 @@ export default function AppointmentChatScreen() {
       mounted = false;
       socket.off("receive_message", onReceiveMessage);
     };
-  }, [safeAppointmentId]);
+  }, [appointmentId, selfUserId]);
 
-  const sendMessage = async () => {
-    if (!text.trim() || !currentUser?._id || !safeAppointmentId || !safeOtherUserId) return;
+  const sendMessage = () => {
+    const senderId = selfUserId
+      ? String(selfUserId)
+      : currentUser?._id
+      ? String(currentUser._id)
+      : "";
+
+    const receiverId = otherUserId ? String(otherUserId) : "";
+
+    if (!text.trim() || !senderId || !receiverId || !appointmentId) {
+      return;
+    }
+
+    console.log("send_message payload:", {
+      appointmentId: String(appointmentId),
+      senderId,
+      receiverId,
+      text: text.trim(),
+    });
 
     setSending(true);
 
-    const payload = {
-      appointmentId: safeAppointmentId,
-      senderId: currentUser._id,
-      receiverId: safeOtherUserId,
-      text: text.trim(),
-    };
+    socket.emit(
+      "send_message",
+      {
+        appointmentId: String(appointmentId),
+        senderId,
+        receiverId,
+        text: text.trim(),
+      },
+      (response: any) => {
+        setSending(false);
 
-    socket.emit("send_message", payload, (response: any) => {
-      setSending(false);
+        if (!response?.ok) {
+          console.log("send_message failed:", response?.message);
+          return;
+        }
 
-      if (!response?.ok) {
-        console.log("send_message failed:", response?.message);
-        return;
+        setText("");
+
+        setTimeout(() => {
+          flatListRef.current?.scrollToEnd({ animated: true });
+        }, 100);
       }
-
-      setText("");
-      setTimeout(() => {
-        flatListRef.current?.scrollToEnd({ animated: true });
-      }, 100);
-    });
+    );
   };
+
+  const effectiveSelfId = selfUserId
+    ? String(selfUserId)
+    : currentUser?._id
+    ? String(currentUser._id)
+    : "";
 
   const renderItem = ({ item }: any) => {
     const senderId =
       typeof item?.sender === "object" ? item?.sender?._id : item?.sender;
 
-    const isMine = String(senderId) === String(currentUser?._id);
+    const isMine = String(senderId) === String(effectiveSelfId);
 
     return (
       <View style={[styles.messageRow, isMine ? styles.messageRowMine : styles.messageRowOther]}>
@@ -195,7 +220,7 @@ export default function AppointmentChatScreen() {
           </TouchableOpacity>
 
           <View style={styles.headerTextWrap}>
-            <Text style={styles.headerTitle}>{safeOtherUserName || "Conversation"}</Text>
+            <Text style={styles.headerTitle}>{otherUserName || "Conversation"}</Text>
             <Text style={styles.headerSubtitle}>Appointment chat</Text>
           </View>
         </View>
