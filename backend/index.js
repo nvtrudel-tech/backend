@@ -73,15 +73,35 @@ io.on("connection", (socket) => {
 
       const customerId =
         appointment.customer?._id?.toString?.() ||
-        appointment.customer?.toString?.();
+        appointment.customer?.toString?.() ||
+        null;
 
       const workerId =
         appointment.worker?._id?.toString?.() ||
-        appointment.worker?.toString?.();
+        appointment.worker?.toString?.() ||
+        null;
 
-      const allowedUsers = [customerId, workerId];
+      const sender = String(senderId);
+      const receiver = String(receiverId);
+      const allowedUsers = [String(customerId), String(workerId)];
 
-      if (!allowedUsers.includes(senderId) || !allowedUsers.includes(receiverId)) {
+      console.log("socket auth check:", {
+        appointmentId,
+        sender,
+        receiver,
+        customerId,
+        workerId,
+        allowedUsers,
+      });
+
+      if (!customerId || !workerId) {
+        return callback?.({
+          ok: false,
+          message: "Appointment must have both customer and worker assigned",
+        });
+      }
+
+      if (!allowedUsers.includes(sender) || !allowedUsers.includes(receiver)) {
         return callback?.({ ok: false, message: "Not authorized for this chat" });
       }
 
@@ -100,10 +120,10 @@ io.on("connection", (socket) => {
       const newMessage = await Message.create({
         conversation: conversation._id,
         appointment: appointmentId,
-        sender: senderId,
-        receiver: receiverId,
+        sender: sender,
+        receiver: receiver,
         text: text.trim(),
-        readBy: [senderId],
+        readBy: [sender],
       });
 
       conversation.lastMessage = text.trim();
