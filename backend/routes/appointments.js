@@ -98,16 +98,16 @@ Job Description: ${description}`;
     res.status(201).json(appointment);
   } catch (err) {
     console.error("Create appointment error:", err);
-    // --- MODIFIED: Fixed typo 5.00 -> 500 ---
     res.status(500).json({ msg: "Error creating appointment", error: err.message });
   }
 });
 
-// --- MODIFIED: Update appointment (Handles new priceBreakdown) ---
+// --- MODIFIED: Update appointment (Handles new priceBreakdown and cancellationReason) ---
 router.put("/:id", async (req, res) => {
   try {
     // We now expect 'priceBreakdown' (an array) instead of 'workerPrice'
-    const { status, date, priceBreakdown } = req.body; 
+    // --- ADDED cancellationReason to destructuring ---
+    const { status, date, priceBreakdown, cancellationReason } = req.body; 
     
     if (!status) {
        return res.status(400).json({ msg: "Status is required." });
@@ -119,7 +119,13 @@ router.put("/:id", async (req, res) => {
     const updateFields = { status };
     if (date) updateFields.date = date; 
     
-    // --- MODIFIED PRICE LOGIC (Copied from your code) ---
+    // --- NEW: Add cancellationReason to update if provided ---
+    if (cancellationReason) {
+      updateFields.cancellationReason = cancellationReason;
+    }
+    // ---
+
+    // --- MODIFIED PRICE LOGIC ---
     let newTotalPrice = 0; // Default to 0
 
     if (priceBreakdown && Array.isArray(priceBreakdown) && priceBreakdown.length > 0) {
@@ -145,9 +151,8 @@ router.put("/:id", async (req, res) => {
       return res.status(400).json({ msg: "A price breakdown is required to propose a price." });
     }
     
-    // --- THIS IS THE CRITICAL FIX (Copied from your code) ---
+    // --- THIS IS THE CRITICAL FIX ---
     // Always set totalPrice and workerPrice, even if they are 0.
-    // This prevents "null" from being saved to the database.
     updateFields.totalPrice = newTotalPrice;
     updateFields.workerPrice = newTotalPrice; 
     // --- END FIX ---
@@ -162,7 +167,7 @@ router.put("/:id", async (req, res) => {
       return res.status(404).json({ msg: "Appointment not found" });
     }
     
-    // --- Notification Logic (MODIFIED to use totalPrice) ---
+    // --- Notification Logic (MODIFIED to use totalPrice and cancellationReason) ---
     
     // 1. Notify CUSTOMER
     try {
@@ -172,7 +177,6 @@ router.put("/:id", async (req, res) => {
         
         if (status === 'price_pending' && oldStatus !== 'price_pending') { 
           notificationTitle = `Price Proposed!`;
-          // Use the new totalPrice
           notificationBody = `${appointment.worker?.name || 'Your specialist'} has proposed a price of $${appointment.totalPrice.toFixed(2)} for the ${appointment.service} job. Tap to review the breakdown.`;
         
         } else if (status === 'en_route' && oldStatus !== 'en_route') {
@@ -181,19 +185,24 @@ router.put("/:id", async (req, res) => {
             
         } else if (status === 'confirmed' && oldStatus !== 'confirmed') { 
           notificationTitle = `Appointment Confirmed!`;
-          // Use the new totalPrice
           notificationBody = `Your ${appointment.service} job with ${appointment.worker?.name || 'your specialist'} is confirmed for $${appointment.totalPrice.toFixed(2)}.`;
+        
         } else if (status === 'completed') {
           notificationTitle = `Job Completed!`;
-          // Use the new totalPrice
           notificationBody = `The ${appointment.service} job is complete. Final price: $${appointment.totalPrice.toFixed(2)}.`;
+        
         } else if (status === 'cancelled') {
            notificationTitle = `Appointment Canceled!`;
-           notificationBody = `Your ${appointment.service} job has been cancelled.`;
+           // --- NEW: Include cancellation reason if it exists ---
+           if (appointment.cancellationReason) {
+             notificationBody = `Your ${appointment.service} job has been cancelled. Reason: ${appointment.cancellationReason}`;
+           } else {
+             notificationBody = `Your ${appointment.service} job has been cancelled.`;
+           }
+           // ---
         }
         
         if (notificationTitle) {
-           // This call will now use the new SDK function
            await sendPushNotification(
               appointment.customer.expoPushToken,
               notificationTitle,
@@ -214,19 +223,25 @@ router.put("/:id", async (req, res) => {
          
          if (status === 'confirmed') {
              workerNotificationTitle = `Price Accepted! 🎉`;
-             // Use the new totalPrice
              workerNotificationBody = `The customer accepted your price of $${appointment.totalPrice.toFixed(2)}. The job is now confirmed!`;
+         
          } else if (status === 'pending') {
              workerNotificationTitle = `Price Rejected/Countered`;
              workerNotificationBody = `The customer rejected your price proposal for the ${appointment.service} job. Review the details to send a new proposal.`;
+         
          } else if (status === 'cancelled') {
              workerNotificationTitle = `Job Canceled By Customer 😥`;
-             workerNotificationBody = `The customer decided to cancel the ${appointment.service} job during the negotiation phase.`;
+             // --- NEW: Include cancellation reason if it exists ---
+             if (appointment.cancellationReason) {
+                workerNotificationBody = `The customer decided to cancel the ${appointment.service} job. Reason: ${appointment.cancellationReason}`;
+             } else {
+                workerNotificationBody = `The customer decided to cancel the ${appointment.service} job during the negotiation phase.`;
+             }
+             // ---
          }
          
          if (workerNotificationTitle) {
              try {
-                  // This call will now use the new SDK function
                   await sendPushNotification(
                       appointment.worker.expoPushToken,
                       workerNotificationTitle,
@@ -246,14 +261,20 @@ router.put("/:id", async (req, res) => {
          if (status === 'pending') { // Customer requested reschedule
              workerNotificationTitle = `Reschedule Request`;
              workerNotificationBody = `The customer has requested a reschedule for the ${appointment.service} job. Please review and propose a new time/price.`;
+         
          } else if (status === 'cancelled') { // Customer cancelled a confirmed job
              workerNotificationTitle = `Job Canceled By Customer 😥`;
-             workerNotificationBody = `The customer has CANCELED the confirmed ${appointment.service} job.`;
+             // --- NEW: Include cancellation reason if it exists ---
+             if (appointment.cancellationReason) {
+                workerNotificationBody = `The customer has CANCELED the confirmed ${appointment.service} job. Reason: ${appointment.cancellationReason}`;
+             } else {
+                workerNotificationBody = `The customer has CANCELED the confirmed ${appointment.service} job.`;
+             }
+             // ---
          }
          
          if (workerNotificationTitle) {
              try {
-                  // This call will now use the new SDK function
                   await sendPushNotification(
                       appointment.worker.expoPushToken,
                       workerNotificationTitle,

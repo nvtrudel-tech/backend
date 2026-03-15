@@ -18,7 +18,7 @@ import {
 import MapView, { Marker } from "react-native-maps";
 import { SafeAreaView } from "react-native-safe-area-context";
 // --- FIXED PATHS ---
-import ThemeToggle from "../context/ThemeContext";
+import ThemeToggle from "../components/ThemeToggle"; // --- FIX: Corrected import path
 import { useTheme } from "../context/ThemeContext";
 // ---
 
@@ -78,6 +78,10 @@ export default function WorkerDashboard() {
   const [selectedDateTime, setSelectedDateTime] = useState(new Date());
   // We now use an array for the price breakdown
   const [priceBreakdown, setPriceBreakdown] = useState<PriceItem[]>([{ item: '', price: '' }]);
+
+  // --- FIX: State to control picker visibility ---
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [showTimePicker, setShowTimePicker] = useState(false);
   // ---
 
   // (fetchAppointments function is unchanged)
@@ -112,9 +116,6 @@ export default function WorkerDashboard() {
     }
   };
 
-  // (All other useEffects and functions down to handleScheduleJob are unchanged)
-  // ... (useEffect, registerForPushNotificationsAsync, handlePickImage, handleSaveProfile, handleClockToggle, etc.) ...
-  
   // (useEffect for initialization is unchanged)
   useEffect(() => {
     const initialize = async () => {
@@ -354,21 +355,45 @@ export default function WorkerDashboard() {
       }
     }
   };
-  // (onDateTimeChange is unchanged)
-  const onDateTimeChange = (event: any, date?: Date) => {
-    if (Platform.OS === 'android') {
-        setDateTimeModalVisible(false);
-    }
-    if (date) {
-        if (date < new Date()) {
-          setSelectedDateTime(new Date());
-        } else {
-          setSelectedDateTime(date);
-        }
+  
+  // --- FIX: Combined and simplified picker handlers ---
+  const onDateChange = (event: any, newDate?: Date) => {
+    // Always hide the picker first
+    setShowDatePicker(false);
+    
+    // Check if a date was actually set (not dismissed)
+    if (event.type === 'set' && newDate) {
+      const combinedDate = new Date(selectedDateTime); // Start with current state
+      combinedDate.setFullYear(newDate.getFullYear());
+      combinedDate.setMonth(newDate.getMonth());
+      combinedDate.setDate(newDate.getDate());
+      
+      setSelectedDateTime(combinedDate);
+
+      // --- CHAIN THE PICKERS ---
+      // Use a brief timeout to allow the first picker to close before opening the next
+      setTimeout(() => {
+        setShowTimePicker(true);
+      }, 100);
     }
   };
 
-  // --- MODIFIED: handleScheduleJob now sets the priceBreakdown state ---
+  const onTimeChange = (event: any, newTime?: Date) => {
+    // Always hide the picker
+    setShowTimePicker(false);
+
+    // Check if a time was actually set
+    if (event.type === 'set' && newTime) {
+      const combinedTime = new Date(selectedDateTime); // Start with current state
+      combinedTime.setHours(newTime.getHours());
+      combinedTime.setMinutes(newTime.getMinutes());
+      
+      setSelectedDateTime(combinedTime);
+    }
+  };
+  // ---
+
+  // (handleScheduleJob is unchanged)
   const handleScheduleJob = (job: any) => {
     setCurrentJobToSchedule(job);
     const jobDate = new Date(job.date);
@@ -396,7 +421,7 @@ export default function WorkerDashboard() {
     setDateTimeModalVisible(true);
   };
 
-  // --- MODIFIED: handleConfirmSchedule now sends the full breakdown ---
+  // (handleConfirmSchedule is unchanged)
   const handleConfirmSchedule = async () => {
     if (!currentJobToSchedule) return;
 
@@ -431,7 +456,7 @@ export default function WorkerDashboard() {
     setPriceBreakdown([{ item: '', price: '' }]); // Reset for next time
   };
 
-  // --- MODIFIED: performStatusUpdate signature changed ---
+  // (performStatusUpdate is unchanged)
   const performStatusUpdate = async (
     appointmentId: string, 
     status: string, 
@@ -545,7 +570,7 @@ export default function WorkerDashboard() {
     </Modal>
   );
 
-  // --- NEW: Helper functions to manage the price breakdown state ---
+  // (Helper functions for price breakdown are unchanged)
   const handleBreakdownChange = (index: number, field: 'item' | 'price', value: string) => {
     const newBreakdown = [...priceBreakdown];
     // Allow only numbers and one decimal for price
@@ -574,7 +599,7 @@ export default function WorkerDashboard() {
     setPriceBreakdown(newBreakdown);
   };
 
-  // --- NEW: Calculate total price dynamically ---
+  // (calculatedTotal useMemo is unchanged)
   const calculatedTotal = useMemo(() => {
     return priceBreakdown.reduce((acc, item) => {
         return acc + (parseFloat(item.price) || 0);
@@ -582,7 +607,7 @@ export default function WorkerDashboard() {
   }, [priceBreakdown]);
   // ---
   
-  // --- MODIFIED: renderDateTimeModal now shows the price breakdown UI ---
+  // --- MODIFIED: renderDateTimeModal now shows BUTTONS instead of pickers ---
   const renderDateTimeModal = () => {
     if (!currentJobToSchedule) return null;
     return (
@@ -604,7 +629,7 @@ export default function WorkerDashboard() {
                                 Set your price quotation and confirm the time for the <Text style={{fontWeight: 'bold', color: colors.text}}>{currentJobToSchedule.service}</Text> job.
                             </Text>
                             
-                            {/* --- NEW: Price Breakdown List --- */}
+                            {/* --- Price Breakdown List (unchanged) --- */}
                             <Text style={[styles.inputLabel, { color: colors.text }]}>Price Quotation</Text>
                             {priceBreakdown.map((item, index) => (
                                 <View key={index} style={styles.breakdownItem}>
@@ -639,18 +664,55 @@ export default function WorkerDashboard() {
                             </View>
                             {/* --- END: Price Breakdown List --- */}
 
+                            {/* --- FIX: Replaced inline pickers with buttons --- */}
                             <Text style={[styles.inputLabel, { color: colors.text, marginTop: 20 }]}>Confirm Date and Time</Text>
-                            <DateTimePicker
-                                testID="dateTimePicker"
-                                value={selectedDateTime}
-                                mode="datetime"
-                                is24Hour={true}
-                                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                                onChange={onDateTimeChange}
-                                minimumDate={new Date()}
-                                style={styles.datePicker}
-                                textColor={colors.text}
-                            />
+                            
+                            <TouchableOpacity
+                              style={[styles.datePickerButton, { backgroundColor: colors.background, borderColor: colors.inputBorder }]}
+                              onPress={() => setShowDatePicker(true)} // Open DATE picker
+                            >
+                              <Ionicons name="calendar-outline" size={20} color={colors.primaryButton} />
+                              <Text style={[styles.datePickerButtonText, { color: colors.text }]}>
+                                {selectedDateTime.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}
+                              </Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                              style={[styles.datePickerButton, { backgroundColor: colors.background, borderColor: colors.inputBorder }]}
+                              onPress={() => setShowTimePicker(true)} // Open TIME picker
+                            >
+                              <Ionicons name="time-outline" size={20} color={colors.primaryButton} />
+                              <Text style={[styles.datePickerButtonText, { color: colors.text }]}>
+                                {selectedDateTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              </Text>
+                            </TouchableOpacity>
+                            
+                            {/* On iOS, render inline pickers. On Android, this will be handled by the pop-ups */}
+                            {Platform.OS === 'ios' && (
+                              <>
+                                <DateTimePicker
+                                  testID="datePicker"
+                                  value={selectedDateTime}
+                                  mode="date"
+                                  display='spinner'
+                                  onChange={onDateChange}
+                                  minimumDate={new Date()}
+                                  style={styles.datePicker}
+                                  textColor={colors.text}
+                                />
+                                <DateTimePicker
+                                  testID="timePicker"
+                                  value={selectedDateTime}
+                                  mode="time"
+                                  is24Hour={true}
+                                  display='spinner'
+                                  onChange={onTimeChange}
+                                  style={styles.datePicker}
+                                  textColor={colors.text}
+                                />
+                              </>
+                            )}
+                            {/* --- END OF FIX --- */}
                         </ScrollView>
                         
                         <View style={styles.modalActionButtons}>
@@ -679,6 +741,30 @@ export default function WorkerDashboard() {
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
       {renderSkillModal()}
       {renderDateTimeModal()}
+
+      {/* --- FIX: Render Android pickers conditionally at the top level --- */}
+      {Platform.OS === 'android' && showDatePicker && (
+        <DateTimePicker
+          testID="datePicker"
+          value={selectedDateTime}
+          mode="date"
+          display="default" // Use default pop-up
+          onChange={onDateChange}
+          minimumDate={new Date()}
+        />
+      )}
+      {Platform.OS === 'android' && showTimePicker && (
+        <DateTimePicker
+          testID="timePicker"
+          value={selectedDateTime}
+          mode="time"
+          is24Hour={true}
+          display="default" // Use default pop-up
+          onChange={onTimeChange}
+        />
+      )}
+      {/* --- END OF FIX --- */}
+
       <ScrollView contentContainerStyle={styles.container}>
         <View style={styles.headerBar}>
           <Text style={[styles.header, { color: colors.text }]}>My Dashboard</Text>
@@ -927,7 +1013,25 @@ const styles = StyleSheet.create({
   modalBackdrop: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)', },
   modalContent: { width: '90%', maxHeight: '70%', borderRadius: 20, padding: 20, overflow: 'hidden' },
   dateTimeModalContent: { width: '90%', maxWidth: 400, maxHeight: '85%', borderRadius: 12, padding: 20, alignItems: 'center' }, // --- MODIFIED: Added maxHeight ---
-  datePicker: { width: '100%', height: 150 }, // --- MODIFIED: Reduced height ---
+  // --- FIX: Removed fixed height, added button styles ---
+  datePicker: { 
+    width: '100%', 
+  },
+  datePickerButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 15,
+    marginBottom: 10,
+  },
+  datePickerButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginLeft: 10,
+  },
+  // ---
   modalSubtitle: { fontSize: 14, textAlign: 'center' },
   modalActionButtons: { flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginTop: 20, gap: 10 },
   modalButton: { flex: 1, paddingVertical: 10, paddingHorizontal: 12, borderRadius: 8, alignItems: 'center' },

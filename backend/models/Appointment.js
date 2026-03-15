@@ -18,11 +18,8 @@ const appointmentSchema = new mongoose.Schema(
     description: { type: String, required: true },
     
     // --- MODIFIED: Price fields ---
-    // We now store an array of price items
     priceBreakdown: [PriceItemSchema], 
-    // We also store the calculated total for easy access
     totalPrice: { type: Number, default: 0 },
-    // We keep workerPrice as well for backwards compatibility, but it will be set to the total
     workerPrice: { type: Number, default: 0 }, 
     // ---
 
@@ -31,6 +28,13 @@ const appointmentSchema = new mongoose.Schema(
       enum: ["pending", "price_pending", "confirmed", "en_route", "completed", "cancelled"],
       default: "pending",
     },
+
+    // --- NEW: Cancellation Reason ---
+    cancellationReason: {
+      type: String,
+      default: null // Only populated if the status is 'cancelled'
+    },
+    // ---
   },
   { timestamps: true }
 );

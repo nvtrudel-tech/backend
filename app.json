@@ -4,21 +4,29 @@
     "slug": "Connexions",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/C9.png",
     "scheme": "connectionapp",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.anonymous.ConnectionApp"
+      "bundleIdentifier": "com.anonymous.ConnectionApp",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
+      "package": "com.anonymous.ConnectionApp",
+      "edgeToEdgeEnabled": true,
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyC77v9FbWhLcGWaUDp1uSHu10CwD-GD1lQ"
+        }
+      },
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
-      },
-      "edgeToEdgeEnabled": true,
-      "package": "com.anonymous.ConnectionApp"
+      }
     },
     "web": {
       "bundler": "metro",
@@ -38,7 +46,8 @@
       ],
       "expo-font",
       "expo-web-browser",
-      "expo-localization"
+      "expo-localization",
+      "@react-native-community/datetimepicker"
     ],
     "experiments": {
       "typedRoutes": true

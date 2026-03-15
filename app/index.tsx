@@ -2,29 +2,14 @@ import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Location from "expo-location";
-import * as Notifications from 'expo-notifications';
+import * as Notifications from "expo-notifications";
 import { useRouter } from "expo-router";
-
-// --- CUSTOM MARKER ICONS ---
-// Paths are relative to the 'app' folder, so '..' goes to the root
-import PlugIcon from "../assets/images/PlugHQ.png";       // For "Connexions"
-import ElectricianIcon from "../assets/images/logo_elec.png"; // For other electricians
-import PlumberIcon from "../assets/images/Plumbing.png";  // For plumbers
-import DrywallIcon from "../assets/images/Drywall.png";
-import CarpenterIcon from "../assets/images/hammer.png";
-import RooferIcon from "../assets/images/roof3.png";
-import FireAlarmIcon from "../assets/images/fire_alarm.png";
-import HomeAutoIcon from "../assets/images/HomeAuto.png";
-import HvacIcon from "../assets/images/HVAC.png";
-import PainterIcon from "../assets/images/PaintBrush.png";
-import HeavyEquipIcon from "../assets/images/HeavyEquip.png";
-// ---
-
-import React, { useEffect, useState, useRef } from "react"; 
-import { useTranslation } from 'react-i18next';
+import React, { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   ActivityIndicator,
-  Alert, Dimensions,
+  Alert,
+  Dimensions,
   Image,
   Linking,
   Modal,
@@ -33,44 +18,43 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View
 } from "react-native";
-import DropDownPicker from "react-native-dropdown-picker";
-import MapView, { Marker } from "react-native-maps"; 
+import MapView, { Marker } from "react-native-maps";
 import { SafeAreaView } from "react-native-safe-area-context";
-
-// --- FIXED PATHS ---
-// Paths are relative to 'app/index.tsx', so './' looks inside 'app'
+import DrywallIcon from "../assets/images/Drywall.png";
+import FireAlarmIcon from "../assets/images/fire_alarm.png";
+import CarpenterIcon from "../assets/images/hammer.png";
+import HeavyEquipIcon from "../assets/images/HeavyEquip.png";
+import HomeAutoIcon from "../assets/images/HomeAuto.png";
+import HvacIcon from "../assets/images/HVAC.png";
+import ElectricianIcon from "../assets/images/logo_elec.png";
+import PainterIcon from "../assets/images/PaintBrush.png";
+import PlugIcon from "../assets/images/PlugHQ.png";
+import PlumberIcon from "../assets/images/Plumbing.png";
+import RooferIcon from "../assets/images/roof3.png";
 import ThemeToggle from "./components/ThemeToggle";
 import { useTheme } from "./context/ThemeContext";
-// ---
 
 const screenWidth = Dimensions.get("window").width;
-
-// --- API URL SWITCH ---
-const USE_LOCAL_BACKEND = true; 
-
+const CATEGORY_VIEW_WIDTH = screenWidth;
 const API_URL = "https://backend-tknm.onrender.com/api";
-// --------------------
 
-// --- Skill to Icon Map ---
-// This map links a worker's skill to the imported logo
 const skillIconMap: { [key: string]: any } = {
-  "Electrician": ElectricianIcon,
-  "Plumber": PlumberIcon,
-  "Drywall": DrywallIcon,
-  "Carpenter": CarpenterIcon,
-  "Roofer": RooferIcon,
+  Electrician: ElectricianIcon,
+  Plumber: PlumberIcon,
+  Drywall: DrywallIcon,
+  Carpenter: CarpenterIcon,
+  Roofer: RooferIcon,
   "Fire/Alarm": FireAlarmIcon,
   "Home Automation": HomeAutoIcon,
-  "HVAC": HvacIcon,
-  "Painter": PainterIcon,
+  HVAC: HvacIcon,
+  Painter: PainterIcon,
   "Heavy Equipment": HeavyEquipIcon,
-  // Use PlugIcon as the default for any other skill
-  "default": PlugIcon, 
+  default: PlugIcon,
 };
-// ---
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -80,155 +64,207 @@ Notifications.setNotificationHandler({
   }),
 });
 
-// --- Worker Interface ---
 interface Worker {
   _id: string;
   name: string;
   skills?: string[];
   currentLocation: {
-    type: 'Point';
-    coordinates: [number, number]; // [longitude, latitude]
+    type: "Point";
+    coordinates: [number, number];
   };
   currentClock: {
     clockedIn: boolean;
   };
 }
-// ---
 
 export default function ElectricianAppView() {
   const router = useRouter();
   const { colors } = useTheme();
   const { t } = useTranslation();
 
+  const mapRef = useRef<MapView>(null);
+  const scrollViewRef = useRef<ScrollView>(null);
+
+  const [checkingUser, setCheckingUser] = useState(true);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
-  const [userProfilePic, setUserProfilePic] = useState<string | null>(null); 
+  const [userProfilePic, setUserProfilePic] = useState<string | null>(null);
   const [isPressedEmergency, setIsPressedEmergency] = useState(false);
   const [isPressedSchedule, setIsPressedSchedule] = useState(false);
-  
+
   const [location, setLocation] = useState<{ latitude: number; longitude: number } | null>(null);
-  const [currentAddress, setCurrentAddress] = useState<string>("Getting your location..."); 
-  const [locationError, setLocationError] = useState<string | null>(null); 
-  const mapRef = useRef<MapView>(null); 
+  const [currentAddress, setCurrentAddress] = useState<string>("Getting your location...");
+  const [locationError, setLocationError] = useState<string | null>(null);
 
   const [myAppointments, setMyAppointments] = useState<any[]>([]);
   const [isLoadingAppts, setIsLoadingAppts] = useState(true);
   const [isCancelModalVisible, setIsCancelModalVisible] = useState(false);
   const [appointmentToCancel, setAppointmentToCancel] = useState<any | null>(null);
   const [isCancelling, setIsCancelling] = useState(false);
-  
+  const [cancellationReason, setCancellationReason] = useState("");
+
   const [isNegotiationModalVisible, setIsNegotiationModalVisible] = useState(false);
   const [jobToNegotiate, setJobToNegotiate] = useState<any | null>(null);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
 
-  const [workers, setWorkers] = useState<Worker[]>([]); 
+  const [workers, setWorkers] = useState<Worker[]>([]);
   const [isLoadingWorkers, setIsLoadingWorkers] = useState(true);
 
   const categoryLabels = [
-    "Electrician", "Plumber", "Drywall", "Carpenter", "Roofer",
-    "Fire/Alarm", "Home Automation", "HVAC", "Painter", "Heavy Equipment",
+    "Electrician",
+    "Plumber",
+    "Drywall",
+    "Carpenter",
+    "Roofer",
+    "Fire/Alarm",
+    "Home Automation",
+    "HVAC",
+    "Painter",
+    "Heavy Equipment",
   ];
-  // --- FIXED PATHS ---
-  const categoryImages = [
-    require("../assets/images/logo_elec.png"), require("../assets/images/Plumbing.png"),
-    require("../assets/images/Drywall.png"), require("../assets/images/hammer.png"),
-    require("../assets/images/roof3.png"), require("../assets/images/fire_alarm.png"),
-    require("../assets/images/HomeAuto.png"), require("../assets/images/HVAC.png"),
-    require("../assets/images/PaintBrush.png"), require("../assets/images/HeavyEquip.png"),
-  ];
-  // ---
-  const [open, setOpen] = useState(false);
-  const [selectedService, setSelectedService] = useState<string | null>("Electrician");
-  const [items, setItems] = useState(
-    categoryLabels.map((label, index) => ({
-      label: t(`categories:${label}`, { defaultValue: label }),
-      value: label,
-      icon: () => <Image source={categoryImages[index]} style={styles.dropdownIcon} />
-    }))
-  );
-  // ---
 
-  // (useEffect for initialization is unchanged)
+  const categoryImages = [
+    require("../assets/images/logo_elec.png"),
+    require("../assets/images/Plumbing.png"),
+    require("../assets/images/Drywall.png"),
+    require("../assets/images/hammer.png"),
+    require("../assets/images/roof3.png"),
+    require("../assets/images/fire_alarm.png"),
+    require("../assets/images/HomeAuto.png"),
+    require("../assets/images/HVAC.png"),
+    require("../assets/images/PaintBrush.png"),
+    require("../assets/images/HeavyEquip.png"),
+  ];
+
+  const [selectedService, setSelectedService] = useState<string | null>("Electrician");
+
+  const handleCategoryScroll = (event: any) => {
+    const contentOffsetX = event.nativeEvent.contentOffset.x;
+    const newIndex = Math.round(contentOffsetX / CATEGORY_VIEW_WIDTH);
+
+    if (newIndex >= 0 && newIndex < categoryLabels.length) {
+      const newService = categoryLabels[newIndex];
+      if (selectedService !== newService) {
+        setSelectedService(newService);
+      }
+    }
+  };
+
   useEffect(() => {
     (async () => {
-      // 1. Check login status
       const userString = await AsyncStorage.getItem("user");
       const user = userString ? JSON.parse(userString) : null;
+
+      if (
+        user?.role === "worker" ||
+        user?.role === "specialist" ||
+        user?.userType === "worker" ||
+        user?.userType === "specialist" ||
+        user?.isWorker === true ||
+        user?.isSpecialist === true
+      ) {
+        router.replace("/worker/dashboard");
+        return;
+      }
+
       setIsLoggedIn(!!user);
       setUserId(user?._id || null);
-      setUserProfilePic(user?.profileImageBase64 || null); 
+      setUserProfilePic(user?.profileImageBase64 || null);
 
-      if (user) {
+      if (user?._id) {
         registerForPushNotificationsAsync(user._id);
       } else {
         setIsLoadingAppts(false);
       }
 
-      // 2. Get location permissions
-      let { status } = await Location.requestForegroundPermissionsAsync();
+      const savedService = await AsyncStorage.getItem("selectedService");
+      const initialService = savedService || "Electrician";
+      setSelectedService(initialService);
+
+      const savedIndex = categoryLabels.findIndex((label) => label === initialService);
+      if (savedIndex !== -1) {
+        setTimeout(() => {
+          scrollViewRef.current?.scrollTo({
+            x: savedIndex * CATEGORY_VIEW_WIDTH,
+            animated: false,
+          });
+        }, 100);
+      }
+
+      const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== "granted") {
         setLocationError("Permission to access location was denied");
         setIsLoadingWorkers(false);
+        setCheckingUser(false);
         return;
       }
-      
-      // 3. Get HIGH-ACCURACY Location
+
       try {
-        let currentLocation = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.BestForNavigation, 
+        const currentLocation = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.BestForNavigation,
         });
+
         setLocation({
           latitude: currentLocation.coords.latitude,
           longitude: currentLocation.coords.longitude,
         });
-        
-        // 4. Reverse Geocode the location
-        await reverseGeocode(currentLocation.coords.latitude, currentLocation.coords.longitude);
 
+        await reverseGeocode(
+          currentLocation.coords.latitude,
+          currentLocation.coords.longitude
+        );
       } catch (error) {
         console.error("Error getting location:", error);
         setLocationError("Could not get your location. Please ensure GPS is on.");
         setIsLoadingWorkers(false);
+      } finally {
+        setCheckingUser(false);
       }
     })();
   }, []);
-  
-  // (useEffect for fetching appointments is unchanged)
+
   useEffect(() => {
     if (!userId) {
       setIsLoadingAppts(false);
       return;
-    };
-    
+    }
+
     fetchAppointments(userId);
+
     const interval = setInterval(() => {
       fetchAppointments(userId);
     }, 5000);
+
     return () => clearInterval(interval);
   }, [userId]);
 
-  // (useEffect for fetching WORKERS is unchanged)
   useEffect(() => {
     if (!location) {
       setIsLoadingWorkers(false);
-      return; 
+      return;
     }
 
     fetchNearbyWorkers(location.latitude, location.longitude);
+
     const interval = setInterval(() => {
       fetchNearbyWorkers(location.latitude, location.longitude);
-    }, 10000); 
+    }, 10000);
 
     return () => clearInterval(interval);
-  }, [location]); 
+  }, [location]);
 
-  // (reverseGeocode function is unchanged)
+  useEffect(() => {
+    if (selectedService) {
+      AsyncStorage.setItem("selectedService", selectedService);
+    }
+  }, [selectedService]);
+
   const reverseGeocode = async (latitude: number, longitude: number) => {
     try {
       const results = await Location.reverseGeocodeAsync({ latitude, longitude });
       if (results.length > 0) {
         const addr = results[0];
-        const addressString = `${addr.city || addr.name}, ${addr.region || ''}`;
+        const addressString = `${addr.city || addr.name || ""}, ${addr.region || ""}`;
         setCurrentAddress(addressString);
       }
     } catch (error) {
@@ -236,40 +272,17 @@ export default function ElectricianAppView() {
       setCurrentAddress("Could not find address");
     }
   };
-  
-  // (validateAddress function is unchanged)
-  const validateAddress = async (addressString: string) => {
-    if (!addressString || addressString.length < 5) {
-      Alert.alert("Invalid Address", "Please enter a more specific address.");
-      return null;
-    }
-    try {
-      const geocodedLocations = await Location.geocodeAsync(addressString);
-      if (geocodedLocations.length === 0) {
-        Alert.alert("Address Not Found", "We couldn't find that address. Please check the spelling.");
-        return null;
-      }
-      const { latitude, longitude } = geocodedLocations[0];
-      console.log('Validated address:', geocodedLocations[0]);
-      return { latitude, longitude };
-    } catch (error) {
-      console.error("Geocode error:", error);
-      Alert.alert("Error", "Could not verify address.");
-      return null;
-    }
-  };
 
-  // (fetchNearbyWorkers function is unchanged)
   const fetchNearbyWorkers = async (latitude: number, longitude: number) => {
     setIsLoadingWorkers(true);
     try {
       const response = await fetch(
-        `${API_URL}/workers/nearby?latitude=${latitude}&longitude=${longitude}&radius=10000` // 10km radius
+        `${API_URL}/workers/nearby?latitude=${latitude}&longitude=${longitude}&radius=10000`
       );
       if (!response.ok) throw new Error("Failed to fetch workers");
-      
+
       const nearbyWorkers: Worker[] = await response.json();
-      
+
       if (JSON.stringify(nearbyWorkers) !== JSON.stringify(workers)) {
         setWorkers(nearbyWorkers);
       }
@@ -280,19 +293,27 @@ export default function ElectricianAppView() {
     }
   };
 
-  // (fetchAppointments function is unchanged)
   const fetchAppointments = async (currentUserId: string) => {
     try {
       const response = await fetch(`${API_URL}/appointments`);
       if (!response.ok) throw new Error("Failed to fetch appointments");
+
       const allAppointments = await response.json();
-      const relevantStatuses = ['pending', 'confirmed', 'price_pending', 'en_route'];
+
+      const relevantStatuses = ["pending", "confirmed", "price_pending", "en_route"];
+
       const userAppointments = allAppointments.filter(
-        (app: any) => app.customer?._id === currentUserId && relevantStatuses.includes(app.status)
+        (app: any) =>
+          app.customer?._id === currentUserId &&
+          relevantStatuses.includes(app.status)
       );
-      userAppointments.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+      userAppointments.sort(
+        (a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime()
+      );
+
       if (JSON.stringify(userAppointments) !== JSON.stringify(myAppointments)) {
-         setMyAppointments(userAppointments);
+        setMyAppointments(userAppointments);
       }
     } catch (error: any) {
       console.error("Poll appointments error:", error);
@@ -301,70 +322,79 @@ export default function ElectricianAppView() {
     }
   };
 
-  // (registerForPushNotificationsAsync function is unchanged)
   async function registerForPushNotificationsAsync(currentUserId: string) {
-    let token;
-    if (Platform.OS === 'android') {
-      await Notifications.setNotificationChannelAsync('default', {
-        name: 'default',
+    let token: string | undefined;
+
+    if (Platform.OS === "android") {
+      await Notifications.setNotificationChannelAsync("default", {
+        name: "default",
         importance: Notifications.AndroidImportance.MAX,
         vibrationPattern: [0, 250, 250, 250],
-        lightColor: '#FF231F7C',
+        lightColor: "#FF231F7C",
       });
     }
+
     const { status: existingStatus } = await Notifications.getPermissionsAsync();
     let finalStatus = existingStatus;
-    if (existingStatus !== 'granted') {
+
+    if (existingStatus !== "granted") {
       const { status } = await Notifications.requestPermissionsAsync();
       finalStatus = status;
     }
-    if (finalStatus !== 'granted') {
-      console.log('Permission not granted to get push token!');
+
+    if (finalStatus !== "granted") {
+      console.log("Permission not granted to get push token!");
       return;
     }
+
     try {
-      const projectId = 'feda72f0-f679-4d6c-8f9a-ff6184cd86eb';
+      const projectId = "feda72f0-f679-4d6c-8f9a-ff6184cd86eb";
       token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
       console.log("Customer Expo Push Token:", token);
     } catch (e) {
       console.error("Failed to get push token:", e);
       return;
     }
+
     if (token) {
       try {
         await fetch(`${API_URL}/auth/save-push-token`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ userId: currentUserId, token }),
         });
-         console.log("Customer push token saved to backend.");
+        console.log("Customer push token saved to backend.");
       } catch (error) {
         console.error("Failed to save customer push token:", error);
       }
     }
   }
 
-  // (All handler functions are unchanged)
   const handleSchedulePress = () => {
     if (!isLoggedIn) {
       Alert.alert("Please Log In", "You must be logged in to schedule an appointment.", [
         { text: "Cancel", style: "cancel" },
-        { text: "Log In", onPress: () => router.push("/login") }
+        { text: "Log In", onPress: () => router.push("/login") },
       ]);
       return;
     }
+
     if (!selectedService) {
-        Alert.alert(
-            t('home.noServiceTitle', {defaultValue: "No Service Selected"}), 
-            t('home.noServiceMessage', {defaultValue: "Please select a service from the dropdown list to continue."}),
-            [{ text: "OK" }]
-        );
-        return;
+      Alert.alert(
+        t("home.noServiceTitle", { defaultValue: "No Service Selected" }),
+        t("home.noServiceMessage", {
+          defaultValue: "Please select a service from the list to continue.",
+        }),
+        [{ text: "OK" }]
+      );
+      return;
     }
-    const serviceToSchedule = selectedService;
-    router.push({ pathname: '/calendar', params: { service: serviceToSchedule } });
+
+    router.push({ pathname: "/calendar", params: { service: selectedService } });
   };
+
   const handleEmergencyCall = () => Linking.openURL("tel://5148920801");
+
   const handleLogout = () => {
     Alert.alert("Confirm Logout", "Are you sure you want to log out?", [
       { text: "Cancel", style: "cancel" },
@@ -374,25 +404,27 @@ export default function ElectricianAppView() {
           if (userId) {
             try {
               await fetch(`${API_URL}/auth/save-push-token`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ userId: userId, token: null }),
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ userId, token: null }),
               });
             } catch (e) {
               console.error("Failed to remove customer token on logout:", e);
             }
           }
+
           await AsyncStorage.removeItem("user");
           setIsLoggedIn(false);
           setUserId(null);
           setMyAppointments([]);
-          setUserProfilePic(null); // Clear profile pic on logout
+          setUserProfilePic(null);
           router.replace("/login");
         },
         style: "destructive",
       },
     ]);
   };
+
   const handleTabPress = () => {
     if (isLoggedIn) {
       handleLogout();
@@ -400,21 +432,30 @@ export default function ElectricianAppView() {
       router.push("/login");
     }
   };
+
   const showCancelModal = (appointment: any) => {
     setAppointmentToCancel(appointment);
+    setCancellationReason("");
     setIsCancelModalVisible(true);
   };
+
   const handleDeleteAppointment = async () => {
     if (!appointmentToCancel) return;
     setIsCancelling(true);
+
     try {
       const response = await fetch(`${API_URL}/appointments/${appointmentToCancel._id}`, {
-        method: 'DELETE',
+        method: "DELETE",
       });
+
       if (!response.ok) {
         throw new Error("Failed to cancel appointment.");
       }
-      setMyAppointments(prev => prev.filter(app => app._id !== appointmentToCancel._id));
+
+      setMyAppointments((prev) =>
+        prev.filter((app) => app._id !== appointmentToCancel._id)
+      );
+
       Alert.alert("Success", "Your appointment has been cancelled.");
     } catch (error: any) {
       console.error("Cancel appointment error:", error);
@@ -425,23 +466,35 @@ export default function ElectricianAppView() {
       setAppointmentToCancel(null);
     }
   };
-  const handleCancelOrReschedule = async (action: 'reschedule' | 'cancel') => {
+
+  const handleCancelOrReschedule = async (action: "reschedule" | "cancel") => {
     if (!appointmentToCancel || !userId) return;
+
     setIsCancelling(true);
-    const newStatus = action === 'reschedule' ? 'pending' : 'cancelled';
+    const newStatus = action === "reschedule" ? "pending" : "cancelled";
     const appointmentId = appointmentToCancel._id;
+
+    const payload: any = { status: newStatus };
+    if (action === "cancel" && cancellationReason.trim()) {
+      payload.cancellationReason = cancellationReason.trim();
+    }
+
     try {
       const response = await fetch(`${API_URL}/appointments/${appointmentId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus }),
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
       });
+
       if (!response.ok) throw new Error(`Failed to ${action} appointment.`);
-      Alert.alert("Success", 
-        action === 'reschedule' 
-          ? "Reschedule requested. The specialist will be notified." 
+
+      Alert.alert(
+        "Success",
+        action === "reschedule"
+          ? "Reschedule requested. The specialist will be notified."
           : "Appointment cancelled. The specialist has been notified."
       );
+
       fetchAppointments(userId);
     } catch (error: any) {
       console.error("Cancel/Reschedule error:", error);
@@ -450,37 +503,44 @@ export default function ElectricianAppView() {
       setIsCancelling(false);
       setIsCancelModalVisible(false);
       setAppointmentToCancel(null);
+      setCancellationReason("");
     }
   };
+
   const showNegotiationModal = (job: any) => {
     setJobToNegotiate(job);
     setIsNegotiationModalVisible(true);
   };
-  const handleNegotiationAction = async (status: 'confirmed' | 'pending' | 'cancelled') => {
+
+  const handleNegotiationAction = async (
+    status: "confirmed" | "pending" | "cancelled"
+  ) => {
     if (!jobToNegotiate || !userId) return;
+
     setIsUpdatingStatus(true);
     const appointmentId = jobToNegotiate._id;
     const payload: any = { status };
-    payload.date = jobToNegotiate.date; 
-    
-    // --- MODIFICATION: Send price breakdown, not workerPrice ---
-    // We send the *existing* breakdown back to the server when confirming/rejecting
-    // to ensure the 'confirmed' status notification has the correct price data.
+    payload.date = jobToNegotiate.date;
     payload.priceBreakdown = jobToNegotiate.priceBreakdown;
-    // ---
 
     try {
       const response = await fetch(`${API_URL}/appointments/${appointmentId}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
       });
+
       if (!response.ok) throw new Error(`Failed to perform action: ${status}`);
-      Alert.alert("Success", 
-        status === 'confirmed' ? "Price accepted! Your appointment is confirmed." :
-        status === 'pending' ? "Price rejected. The specialist will be notified to send a new proposal." :
-        "Appointment cancelled."
+
+      Alert.alert(
+        "Success",
+        status === "confirmed"
+          ? "Price accepted! Your appointment is confirmed."
+          : status === "pending"
+            ? "Price rejected. The specialist will be notified to send a new proposal."
+            : "Appointment cancelled."
       );
+
       fetchAppointments(userId);
     } catch (error: any) {
       console.error("Negotiation action error:", error);
@@ -491,51 +551,139 @@ export default function ElectricianAppView() {
       setJobToNegotiate(null);
     }
   };
-  // ---
 
-  // (renderCancelModal is unchanged)
+  const openAppointmentChat = async (app: any) => {
+    const workerId = app?.worker?._id || app?.worker;
+    const workerName = app?.worker?.name || "Specialist";
+
+    if (!app?._id || !workerId) {
+      Alert.alert("Chat unavailable", "A worker must be assigned before chat can open.");
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/chat/conversation/${app._id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+
+      const data = await response.json().catch(() => ({}));
+      console.log("chat conversation response:", response.status, data);
+
+      if (!response.ok) {
+        throw new Error(data.message || `Chat route failed with status ${response.status}`);
+      }
+
+      router.push({
+        pathname: "/chat/[appointmentId]",
+        params: {
+          appointmentId: String(app._id),
+          otherUserId: String(workerId),
+          otherUserName: workerName,
+          appointmentStatus: app.status || "",
+        },
+      });
+    } catch (error: any) {
+      console.error("Open chat error:", error);
+      Alert.alert("Chat error", error.message || "Could not open chat.");
+    }
+  };
+
   const renderCancelModal = () => {
     if (!appointmentToCancel) return null;
-    const isNegotiation = appointmentToCancel.status === 'confirmed' || appointmentToCancel.status === 'price_pending';
+
+    const isNegotiation =
+      appointmentToCancel.status === "confirmed" ||
+      appointmentToCancel.status === "price_pending";
+
     return (
       <Modal
         animationType="fade"
-        transparent={true}
+        transparent
         visible={isCancelModalVisible}
         onRequestClose={() => setIsCancelModalVisible(false)}
       >
         <Pressable style={styles.modalBackdrop} onPress={() => setIsCancelModalVisible(false)}>
           <Pressable style={[styles.modalContent, { backgroundColor: colors.cardBackground }]}>
             <Text style={[styles.modalTitle, { color: colors.text }]}>
-              {isNegotiation ? t('cancel.rescheduleTitle') : t('cancel Appointment')}
+              {isNegotiation
+                ? t("cancel.rescheduleTitle", { defaultValue: "Reschedule or Cancel" })
+                : t("cancelModal.title", { defaultValue: "Cancel Appointment" })}
             </Text>
+
             <Text style={[styles.modalMessage, { color: colors.subText }]}>
-              {isNegotiation ? t('cancel.rescheduleMessage') : t('click cancel to delete')}
+              {isNegotiation
+                ? t("cancel.rescheduleMessage", {
+                    defaultValue: "Would you like to reschedule or cancel this appointment?",
+                  })
+                : t("cancelModal.message", {
+                    defaultValue: "Click cancel to delete this appointment.",
+                  })}
             </Text>
-            
+
             {isNegotiation ? (
-              <View style={styles.modalButtonContainer}>
-                <TouchableOpacity
-                  style={[styles.modalButton, { backgroundColor: colors.primaryButton }]}
-                  onPress={() => handleCancelOrReschedule('reschedule')}
-                  disabled={isCancelling}
-                >
-                  {isCancelling ? <ActivityIndicator color="#fff" /> : <Text style={styles.modalButtonText}>{t('cancelModal.reschedule')}</Text>}
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.modalButton, { backgroundColor: '#ef4444' }]}
-                  onPress={() => handleCancelOrReschedule('cancel')}
-                  disabled={isCancelling}
-                >
-                  {isCancelling ? <ActivityIndicator color="#fff" /> : <Text style={styles.modalButtonText}>{t('cancelModal.cancelJob')}</Text>}
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.modalButton, { backgroundColor: colors.inputBorder, width: '100%', marginTop: 10 }]}
-                  onPress={() => setIsCancelModalVisible(false)}
-                  disabled={isCancelling}
-                >
-                  <Text style={[styles.modalButtonText, { color: colors.text }]}>{t('Keep')}</Text>
-                </TouchableOpacity>
+              <View>
+                <TextInput
+                  style={[
+                    styles.modalTextInput,
+                    {
+                      borderColor: colors.inputBorder,
+                      color: colors.text,
+                      backgroundColor: colors.inputBackground || colors.background,
+                    },
+                  ]}
+                  placeholder={t(
+                    "cancelModal.reasonPlaceholder",
+                    "Reason for cancellation (optional)"
+                  )}
+                  placeholderTextColor={colors.subText}
+                  value={cancellationReason}
+                  onChangeText={setCancellationReason}
+                  multiline
+                />
+
+                <View style={styles.modalButtonContainer}>
+                  <TouchableOpacity
+                    style={[styles.modalButton, { backgroundColor: colors.primaryButton }]}
+                    onPress={() => handleCancelOrReschedule("reschedule")}
+                    disabled={isCancelling}
+                  >
+                    {isCancelling ? (
+                      <ActivityIndicator color="#fff" />
+                    ) : (
+                      <Text style={styles.modalButtonText}>
+                        {t("cancelModal.reschedule", { defaultValue: "Reschedule" })}
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.modalButton, { backgroundColor: "#ef4444" }]}
+                    onPress={() => handleCancelOrReschedule("cancel")}
+                    disabled={isCancelling}
+                  >
+                    {isCancelling ? (
+                      <ActivityIndicator color="#fff" />
+                    ) : (
+                      <Text style={styles.modalButtonText}>
+                        {t("cancelModal.cancelJob", { defaultValue: "Cancel Job" })}
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.modalButton,
+                      { backgroundColor: colors.inputBorder, width: "100%", marginTop: 10 },
+                    ]}
+                    onPress={() => setIsCancelModalVisible(false)}
+                    disabled={isCancelling}
+                  >
+                    <Text style={[styles.modalButtonText, { color: colors.text }]}>
+                      {t("cancelModal.keep", { defaultValue: "Keep" })}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             ) : (
               <View style={styles.modalButtonContainer}>
@@ -544,17 +692,22 @@ export default function ElectricianAppView() {
                   onPress={() => setIsCancelModalVisible(false)}
                   disabled={isCancelling}
                 >
-                  <Text style={[styles.modalButtonText, { color: colors.text }]}>{t('Keep')}</Text>
+                  <Text style={[styles.modalButtonText, { color: colors.text }]}>
+                    {t("cancelModal.keep", { defaultValue: "Keep" })}
+                  </Text>
                 </TouchableOpacity>
+
                 <TouchableOpacity
-                  style={[styles.modalButton, { backgroundColor: '#ef4444' }]}
+                  style={[styles.modalButton, { backgroundColor: "#ef4444" }]}
                   onPress={handleDeleteAppointment}
                   disabled={isCancelling}
                 >
                   {isCancelling ? (
                     <ActivityIndicator color="#fff" />
                   ) : (
-                    <Text style={[styles.modalButtonText, { color: '#fff' }]}>{t('Cancel')}</Text>
+                    <Text style={[styles.modalButtonText, { color: "#fff" }]}>
+                      {t("cancelModal.cancel", { defaultValue: "Cancel" })}
+                    </Text>
                   )}
                 </TouchableOpacity>
               </View>
@@ -564,84 +717,157 @@ export default function ElectricianAppView() {
       </Modal>
     );
   };
-  
-  // --- MODIFIED: renderNegotiationModal to show full breakdown ---
+
   const renderNegotiationModal = () => {
     if (!jobToNegotiate) return null;
-    
-    // Use totalPrice from the job object, which is calculated on the backend
-    const proposedPrice = jobToNegotiate.totalPrice ? `$${jobToNegotiate.totalPrice.toFixed(2)}` : 'N/A';
-    const proposedDate = new Date(jobToNegotiate.date).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
-    const proposedTime = new Date(jobToNegotiate.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    const proposedPrice = jobToNegotiate.totalPrice
+      ? `$${jobToNegotiate.totalPrice.toFixed(2)}`
+      : "N/A";
+
+    const proposedDate = new Date(jobToNegotiate.date).toLocaleDateString([], {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+    });
+
+    const proposedTime = new Date(jobToNegotiate.date).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
 
     return (
       <Modal
         animationType="fade"
-        transparent={true}
+        transparent
         visible={isNegotiationModalVisible}
         onRequestClose={() => setIsNegotiationModalVisible(false)}
       >
-        <Pressable style={styles.modalBackdrop} onPress={() => setIsNegotiationModalVisible(false)}>
+        <Pressable
+          style={styles.modalBackdrop}
+          onPress={() => setIsNegotiationModalVisible(false)}
+        >
           <Pressable style={[styles.modalContent, { backgroundColor: colors.cardBackground }]}>
             <ScrollView>
-              <Text style={[styles.modalTitle, { color: colors.text }]}>{t('negotiation.reviewTitle')}</Text>
-              <Text style={[styles.modalMessage, { color: colors.text, fontWeight: 'bold' }]}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>
+                {t("negotiation.reviewTitle")}
+              </Text>
+
+              <Text style={[styles.modalMessage, { color: colors.text, fontWeight: "bold" }]}>
                 {jobToNegotiate.service} Job
               </Text>
-              
+
               <View style={styles.proposalDetail}>
-                <Text style={[styles.proposalLabel, { color: colors.subText }]}>{t('negotiation.dateTime')}</Text>
-                <Text style={[styles.proposalValue, { color: colors.text, flexShrink: 1, textAlign: 'right' }]}>{proposedDate} at {proposedTime}</Text>
+                <Text style={[styles.proposalLabel, { color: colors.subText }]}>
+                  {t("negotiation.dateTime")}
+                </Text>
+                <Text
+                  style={[
+                    styles.proposalValue,
+                    { color: colors.text, flexShrink: 1, textAlign: "right" },
+                  ]}
+                >
+                  {proposedDate} at {proposedTime}
+                </Text>
               </View>
-              
-              {/* --- NEW: Show Price Breakdown --- */}
+
               {jobToNegotiate.priceBreakdown && jobToNegotiate.priceBreakdown.length > 0 && (
-                <View style={[styles.priceBreakdownBox, { borderColor: colors.inputBorder, marginTop: 15, padding: 10, borderWidth: 1, borderRadius: 8 }]}>
+                <View
+                  style={[
+                    styles.priceBreakdownBox,
+                    {
+                      borderColor: colors.inputBorder,
+                      marginTop: 15,
+                      padding: 10,
+                      borderWidth: 1,
+                      borderRadius: 8,
+                    },
+                  ]}
+                >
                   <Text style={[styles.priceBreakdownTitle, { color: colors.text }]}>
-                    {t('home.priceBreakdown', 'Price Breakdown')}:
+                    {t("home.priceBreakdown", "Price Breakdown")}:
                   </Text>
+
                   {jobToNegotiate.priceBreakdown.map((item: any, index: number) => (
                     <View key={index} style={styles.priceBreakdownRow}>
-                      <Text style={[styles.priceBreakdownItemText, { color: colors.subText }]}>{item.item}</Text>
-                      <Text style={[styles.priceBreakdownItemText, { color: colors.subText }]}>${item.price.toFixed(2)}</Text>
+                      <Text style={[styles.priceBreakdownItemText, { color: colors.subText }]}>
+                        {item.item}
+                      </Text>
+                      <Text style={[styles.priceBreakdownItemText, { color: colors.subText }]}>
+                        ${item.price.toFixed(2)}
+                      </Text>
                     </View>
                   ))}
                 </View>
               )}
-              {/* --- END: Show Price Breakdown --- */}
 
-              <View style={[styles.proposalDetail, {marginTop: 10, borderTopWidth: 2, borderTopColor: colors.inputBorder, paddingTop: 10}]}>
-                <Text style={[styles.proposalLabel, { color: colors.subText, fontSize: 18 }]}>{t('negotiation.totalPrice', 'Total Price')}</Text>
-                <Text style={[styles.proposalValue, { color: colors.primaryButton, fontSize: 18 }]}>{proposedPrice}</Text>
+              <View
+                style={[
+                  styles.proposalDetail,
+                  {
+                    marginTop: 10,
+                    borderTopWidth: 2,
+                    borderTopColor: colors.inputBorder,
+                    paddingTop: 10,
+                  },
+                ]}
+              >
+                <Text style={[styles.proposalLabel, { color: colors.subText, fontSize: 18 }]}>
+                  {t("negotiation.totalPrice", "Total Price")}
+                </Text>
+                <Text
+                  style={[styles.proposalValue, { color: colors.primaryButton, fontSize: 18 }]}
+                >
+                  {proposedPrice}
+                </Text>
               </View>
 
-              <Text style={[styles.modalMessage, { color: colors.subText, fontSize: 14, marginTop: 15 }]}>
-                {t('negotiation.prompt')}
+              <Text
+                style={[
+                  styles.modalMessage,
+                  { color: colors.subText, fontSize: 14, marginTop: 15 },
+                ]}
+              >
+                {t("negotiation.prompt")}
               </Text>
 
               <View style={styles.modalButtonContainer}>
                 <TouchableOpacity
-                  style={[styles.modalButtonSmall, { backgroundColor: '#10b981', flex: 2 }]}
-                  onPress={() => handleNegotiationAction('confirmed')}
+                  style={[styles.modalButtonSmall, { backgroundColor: "#10b981", flex: 2 }]}
+                  onPress={() => handleNegotiationAction("confirmed")}
                   disabled={isUpdatingStatus}
                 >
-                  {isUpdatingStatus ? <ActivityIndicator color="#fff" /> : <Text style={styles.modalButtonText}>{t('negotiation.accept')}</Text>}
-                </TouchableOpacity>
-                
-                <TouchableOpacity
-                  style={[styles.modalButtonSmall, { backgroundColor: colors.inputBorder }]}
-                  onPress={() => handleNegotiationAction('pending')}
-                  disabled={isUpdatingStatus}
-                >
-                  {isUpdatingStatus ? <ActivityIndicator color="#fff" /> : <Text style={[styles.modalButtonText, { color: colors.text }]}>{t('negotiation.reject')}</Text>}
+                  {isUpdatingStatus ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text style={styles.modalButtonText}>{t("negotiation.accept")}</Text>
+                  )}
                 </TouchableOpacity>
 
                 <TouchableOpacity
-                  style={[styles.modalButtonSmall, { backgroundColor: '#ef4444' }]}
-                  onPress={() => handleNegotiationAction('cancelled')}
+                  style={[styles.modalButtonSmall, { backgroundColor: colors.inputBorder }]}
+                  onPress={() => handleNegotiationAction("pending")}
                   disabled={isUpdatingStatus}
                 >
-                  {isUpdatingStatus ? <ActivityIndicator color="#fff" /> : <Text style={styles.modalButtonText}>{t('negotiation.cancel')}</Text>}
+                  {isUpdatingStatus ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text style={[styles.modalButtonText, { color: colors.text }]}>
+                      {t("negotiation.reject")}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.modalButtonSmall, { backgroundColor: "#ef4444" }]}
+                  onPress={() => handleNegotiationAction("cancelled")}
+                  disabled={isUpdatingStatus}
+                >
+                  {isUpdatingStatus ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text style={styles.modalButtonText}>{t("negotiation.cancel")}</Text>
+                  )}
                 </TouchableOpacity>
               </View>
             </ScrollView>
@@ -650,208 +876,290 @@ export default function ElectricianAppView() {
       </Modal>
     );
   };
-  // ---
 
-  // --- MODIFIED: renderMyAppointments to show price breakdown ---
   const renderMyAppointments = () => {
     if (!isLoggedIn) return null;
+
     if (isLoadingAppts) {
-      return <ActivityIndicator size="large" color={colors.primaryButton} style={{ marginTop: 20 }} />;
+      return (
+        <ActivityIndicator
+          size="large"
+          color={colors.primaryButton}
+          style={{ marginTop: 20 }}
+        />
+      );
     }
+
     const getStatusColor = (status: string) => {
-        switch (status?.toLowerCase()) {
-          case "pending": return colors.subText;
-          case "price_pending": return '#ffc107';
-          case "confirmed": return '#10b981';
-          case "en_route": return '#3b82f6';
-          case "completed": return "#10b981";
-          case "cancelled": return "#dc2626";
-          default: return colors.subText;
-        }
+      switch (status?.toLowerCase()) {
+        case "pending":
+          return colors.subText;
+        case "price_pending":
+          return "#ffc107";
+        case "confirmed":
+          return "#10b981";
+        case "en_route":
+          return "#3b82f6";
+        case "completed":
+          return "#10b981";
+        case "cancelled":
+          return "#dc2626";
+        default:
+          return colors.subText;
+      }
     };
+
     const getStatusText = (app: any) => {
       const status = app.status;
-      if (status === 'price_pending') {
-        const price = app.totalPrice ? app.totalPrice.toFixed(2) : '...';
-        return t('status.price_pending', { price: `$${price}` });
+      if (status === "price_pending") {
+        const price = app.totalPrice ? app.totalPrice.toFixed(2) : "...";
+        return t("status.price_pending", { price: `$${price}` });
       }
-      if (status === 'en_route') {
-        return t('status.en_route', { defaultValue: 'Specialist is on the way' });
+      if (status === "en_route") {
+        return t("status.en_route", { defaultValue: "Specialist is on the way" });
       }
       return t(`status.${status}`, { defaultValue: app.status });
     };
+
+    const canChat = (app: any) => {
+      const workerId = app?.worker?._id || app?.worker;
+      return (
+        !!app?._id &&
+        !!workerId &&
+        ["pending", "confirmed", "price_pending", "en_route"].includes(app.status)
+      );
+    };
+
     return (
       <View style={styles.listContainer}>
-        <Text style={[styles.listHeader, { color: colors.text }]}>{t('home.myAppointments')}</Text>
+        <Text style={[styles.listHeader, { color: colors.text }]}>
+          {t("home.myAppointments")}
+        </Text>
+
         {myAppointments.length === 0 ? (
-          <Text style={[styles.emptyListText, { color: colors.subText }]}>{t('home.noAppointments')}</Text>
+          <Text style={[styles.emptyListText, { color: colors.subText }]}>
+            {t("home.noAppointments")}
+          </Text>
         ) : (
-          myAppointments.map(app => (
-            <View key={app._id} style={[styles.appointmentCard, { backgroundColor: colors.cardBackground, borderColor: colors.inputBorder }]}>
+          myAppointments.map((app) => (
+            <View
+              key={app._id}
+              style={[
+                styles.appointmentCard,
+                {
+                  backgroundColor: colors.cardBackground,
+                  borderColor: colors.inputBorder,
+                },
+              ]}
+            >
               <View style={styles.appointmentDetails}>
-                <Text style={[styles.appointmentService, { color: colors.primaryButton }]}>{app.service}</Text>
+                <Text style={[styles.appointmentService, { color: colors.primaryButton }]}>
+                  {app.service}
+                </Text>
+
                 <Text style={[styles.appointmentDate, { color: colors.text }]}>
-                  {new Date(app.date).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}
-                  {' at '}
-                  {new Date(app.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  {new Date(app.date).toLocaleDateString([], {
+                    weekday: "short",
+                    month: "short",
+                    day: "numeric",
+                  })}
+                  {" at "}
+                  {new Date(app.date).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
                 </Text>
+
                 <Text style={[styles.appointmentWorker, { color: colors.subText }]}>
-                  {t('home.specialist')}: {app.worker?.name || 'Assigning...'}
+                  {t("home.specialist")}: {app.worker?.name || "Assigning..."}
                 </Text>
-                
-                {/* --- NEW: Show Total Price --- */}
-                <Text style={[styles.appointmentTotal, { color: app.totalPrice ? colors.primaryButton : colors.subText }]}>
-                  {t('home.price', 'Price')}: {app.totalPrice ? `$${app.totalPrice.toFixed(2)}` : t('status.pending', 'Pending')}
+
+                <Text
+                  style={[
+                    styles.appointmentTotal,
+                    { color: app.totalPrice ? colors.primaryButton : colors.subText },
+                  ]}
+                >
+                  {t("home.price", "Price")}:{" "}
+                  {app.totalPrice
+                    ? `$${app.totalPrice.toFixed(2)}`
+                    : t("status.pending", "Pending")}
                 </Text>
-                
-                {/* --- NEW: Show Price Breakdown --- */}
+
                 {app.priceBreakdown && app.priceBreakdown.length > 0 && (
                   <View style={[styles.priceBreakdownBox, { borderTopColor: colors.inputBorder }]}>
                     <Text style={[styles.priceBreakdownTitle, { color: colors.text }]}>
-                      {t('home.priceBreakdown', 'Price Breakdown')}:
+                      {t("home.priceBreakdown", "Price Breakdown")}:
                     </Text>
+
                     {app.priceBreakdown.map((item: any, index: number) => (
                       <View key={index} style={styles.priceBreakdownRow}>
-                        <Text style={[styles.priceBreakdownItemText, { color: colors.subText }]}>{item.item}</Text>
-                        <Text style={[styles.priceBreakdownItemText, { color: colors.subText }]}>${item.price.toFixed(2)}</Text>
+                        <Text style={[styles.priceBreakdownItemText, { color: colors.subText }]}>
+                          {item.item}
+                        </Text>
+                        <Text style={[styles.priceBreakdownItemText, { color: colors.subText }]}>
+                          ${item.price.toFixed(2)}
+                        </Text>
                       </View>
                     ))}
                   </View>
                 )}
-                {/* --- END: Show Price Breakdown --- */}
 
-                 <Text style={[styles.appointmentStatus, { color: getStatusColor(app.status) }]}>
-                  {t('home.status')}: {getStatusText(app)}
+                <Text style={[styles.appointmentStatus, { color: getStatusColor(app.status) }]}>
+                  {t("home.status")}: {getStatusText(app)}
                 </Text>
+
+                {canChat(app) && (
+                  <TouchableOpacity
+                    style={[styles.chatButton, { backgroundColor: colors.primaryButton }]}
+                    onPress={() => openAppointmentChat(app)}
+                  >
+                    <Ionicons name="chatbubble-ellipses-outline" size={16} color="#fff" />
+                    <Text style={styles.chatButtonText}>Chat</Text>
+                  </TouchableOpacity>
+                )}
               </View>
-              {app.status === 'price_pending' ? (
-                <TouchableOpacity
-                  style={[styles.actionButton, { backgroundColor: '#ffc107' }]}
-                  onPress={() => showNegotiationModal(app)}
-                >
-                  <Text style={[styles.actionButtonText, { color: colors.text }]}>{t('home.reviewPrice')}</Text>
-                </TouchableOpacity>
-              ) : (app.status === 'pending' || app.status === 'confirmed') && (
-                 <TouchableOpacity
-                  style={styles.cancelButton}
-                  onPress={() => showCancelModal(app)}
-                 >
-                   <Text style={styles.cancelButtonText}>{t('Cancel')}</Text>
-                 </TouchableOpacity>
-              )}
+
+              <View style={styles.cardActionColumn}>
+                {app.status === "price_pending" ? (
+                  <TouchableOpacity
+                    style={[styles.actionButton, { backgroundColor: "#ffc107" }]}
+                    onPress={() => showNegotiationModal(app)}
+                  >
+                    <Text style={[styles.actionButtonText, { color: colors.text }]}>
+                      {t("home.reviewPrice")}
+                    </Text>
+                  </TouchableOpacity>
+                ) : (app.status === "pending" || app.status === "confirmed") && (
+                  <TouchableOpacity
+                    style={styles.cancelButton}
+                    onPress={() => showCancelModal(app)}
+                  >
+                    <Text style={styles.cancelButtonText}>
+                      {t("home.cancel", { defaultValue: "Cancel" })}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
             </View>
           ))
         )}
       </View>
     );
   };
-  // ---
-  
-  // (renderWorkerMarkers function is unchanged)
+
   const renderWorkerMarkers = () => {
     if (!workers || workers.length === 0) return null;
 
     return workers
-      .filter(worker => 
-        worker.currentLocation?.coordinates &&
-        worker.currentLocation.coordinates.length === 2 &&
-        (worker.currentLocation.coordinates[0] !== 0 || worker.currentLocation.coordinates[1] !== 0)
+      .filter(
+        (worker) =>
+          worker.currentLocation?.coordinates &&
+          worker.currentLocation.coordinates.length === 2 &&
+          (worker.currentLocation.coordinates[0] !== 0 ||
+            worker.currentLocation.coordinates[1] !== 0)
       )
-      .map(worker => {
+      .map((worker) => {
         const [longitude, latitude] = worker.currentLocation.coordinates;
-        const primarySkill = worker.skills?.[0] || 'default'; 
-        const markerIcon = skillIconMap[primarySkill] || skillIconMap["default"]; 
+        const primarySkill = worker.skills?.[0] || "default";
+        const markerIcon = skillIconMap[primarySkill] || skillIconMap.default;
 
         return (
           <Marker
             key={worker._id}
             coordinate={{ latitude, longitude }}
             title={worker.name}
-            description={primarySkill || 'Specialist'} 
+            description={primarySkill || "Specialist"}
           >
             <Image source={markerIcon} style={styles.workerMarkerImage} />
           </Marker>
         );
       });
   };
-  // ---
 
-  // --- Main Render (unchanged) ---
+  if (checkingUser) {
+    return (
+      <SafeAreaView
+        style={{
+          flex: 1,
+          backgroundColor: colors.background,
+          justifyContent: "center",
+          alignItems: "center",
+        }}
+      >
+        <ActivityIndicator size="large" color={colors.primaryButton} />
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
       {renderCancelModal()}
       {renderNegotiationModal()}
+
       <LinearGradient colors={colors.gradient} style={{ flex: 1 }}>
-        <ScrollView contentContainerStyle={{ paddingBottom: 80 }} nestedScrollEnabled={true}>
+        <ScrollView contentContainerStyle={{ paddingBottom: 80 }} nestedScrollEnabled>
           <View style={styles.header}>
-            <TouchableOpacity onPress={() => router.push('/profile')} style={styles.headerIcon}>
+            <TouchableOpacity onPress={() => router.push("/profile")} style={styles.headerIcon}>
               <Ionicons name="hammer" size={26} color={colors.text} />
             </TouchableOpacity>
-            <Text style={[styles.title, { color: colors.text }]}>{t('home.title')}</Text>
+            <Text style={[styles.title, { color: colors.text }]}>{t("home.title")}</Text>
             <ThemeToggle />
           </View>
-          
-          {/* --- Location Banner --- */}
+
           <View style={[styles.locationBanner, { backgroundColor: colors.cardBackground }]}>
             <Ionicons name="location-sharp" size={18} color={colors.primaryButton} />
             <Text style={[styles.locationText, { color: colors.text }]} numberOfLines={1}>
               {currentAddress}
             </Text>
           </View>
-          {/* --- */}
 
-          {/* --- MODIFIED: DropDownPicker --- */}
-          <View style={[styles.dropdownContainer, { zIndex: 1000 }]}>
-            <DropDownPicker
-              open={open}
-              value={selectedService}
-              items={items}
-              setOpen={setOpen}
-              setValue={setSelectedService}
-              setItems={setItems}
-              placeholder={t('home.serviceTitleDefault')}
-              style={[styles.dropdown, { backgroundColor: colors.cardBackground, borderColor: colors.inputBorder }]}
-              
-              // Style for the placeholder text itself
-              placeholderStyle={[styles.dropdownPlaceholder, { color: colors.subText }]}
-              
-              // Style for the text in the list
-              labelStyle={[styles.dropdownText, { color: colors.text }]}
-              
-              // Style for the text of the *selected* item (when box is closed)
-              textStyle={[styles.dropdownText, { color: colors.text }]}
-
-              // Style for the *container* of the *selected* item
-              selectedItemContainerStyle={styles.dropdownCenteredItem} 
-              
-              // Style for the *container* of each *list item*
-              listItemContainerStyle={styles.dropdownCenteredItem}
-              
-              dropDownContainerStyle={[styles.dropdownListContainer, { backgroundColor: colors.cardBackground, borderColor: colors.inputBorder }]}
-              searchable={false}
-              listMode="SCROLLVIEW"
-            />
+          <View style={styles.categoryGalleryWrapper}>
+            <ScrollView
+              ref={scrollViewRef}
+              horizontal
+              pagingEnabled
+              showsHorizontalScrollIndicator={false}
+              onScroll={handleCategoryScroll}
+              scrollEventThrottle={16}
+              contentContainerStyle={styles.categoryGalleryContainer}
+              snapToInterval={CATEGORY_VIEW_WIDTH}
+              decelerationRate="fast"
+            >
+              {categoryLabels.map((label, index) => (
+                <View key={index} style={[styles.categoryItem, { width: CATEGORY_VIEW_WIDTH }]}>
+                  <Image source={categoryImages[index]} style={styles.galleryImage} />
+                  <Text style={[styles.serviceTitle, { color: colors.text }]}>
+                    {t(`categories:${label}`, { defaultValue: label })}
+                  </Text>
+                </View>
+              ))}
+            </ScrollView>
           </View>
-          {/* --- END MODIFICATION --- */}
-
 
           <TouchableOpacity
             onPress={handleSchedulePress}
             onPressIn={() => setIsPressedSchedule(true)}
             onPressOut={() => setIsPressedSchedule(false)}
             disabled={!selectedService}
-            style={[ 
-                styles.button, 
-                { opacity: (isPressedSchedule || !selectedService) ? 0.8 : 1, transform: [{ scale: isPressedSchedule ? 0.95 : 1 }], backgroundColor: colors.cardBackground },
-                !selectedService && styles.buttonDisabled
+            style={[
+              styles.button,
+              {
+                opacity: isPressedSchedule || !selectedService ? 0.8 : 1,
+                transform: [{ scale: isPressedSchedule ? 0.95 : 1 }],
+                backgroundColor: colors.cardBackground,
+              },
+              !selectedService && styles.buttonDisabled,
             ]}
           >
-            <Text style={[
-                styles.buttonText, 
+            <Text
+              style={[
+                styles.buttonText,
                 { color: colors.primaryButton },
-                !selectedService && { color: colors.subText }
-            ]}>
-                {t('home.scheduleButton')}
+                !selectedService && { color: colors.subText },
+              ]}
+            >
+              {t("home.scheduleButton")}
             </Text>
           </TouchableOpacity>
 
@@ -859,152 +1167,153 @@ export default function ElectricianAppView() {
             onPress={handleEmergencyCall}
             onPressIn={() => setIsPressedEmergency(true)}
             onPressOut={() => setIsPressedEmergency(false)}
-            style={[ styles.emergencyButton, { opacity: isPressedEmergency ? 0.8 : 1, transform: [{ scale: isPressedEmergency ? 0.95 : 1 }] }]}
+            style={[
+              styles.emergencyButton,
+              {
+                opacity: isPressedEmergency ? 0.8 : 1,
+                transform: [{ scale: isPressedEmergency ? 0.95 : 1 }],
+              },
+            ]}
           >
-            <Text style={styles.emergencyText}>{t('home.emergencyButton')}</Text>
-            {/* --- FIXED PATH --- */}
+            <Text style={styles.emergencyText}>{t("home.emergencyButton")}</Text>
             <Image source={require("../assets/images/phone_12.jpg")} style={styles.phoneIcon} />
-            {/* --- */}
           </TouchableOpacity>
 
-          {/* --- MODIFIED: Map Container --- */}
           <View style={styles.mapContainer}>
             {location ? (
               <MapView
-                ref={mapRef} // Set the ref
+                ref={mapRef}
                 style={{ flex: 1 }}
-                initialRegion={{ 
-                  latitude: location.latitude, 
-                  longitude: location.longitude, 
-                  latitudeDelta: 0.05, // Start with a 5km zoom
-                  longitudeDelta: 0.05 
+                initialRegion={{
+                  latitude: location.latitude,
+                  longitude: location.longitude,
+                  latitudeDelta: 0.05,
+                  longitudeDelta: 0.05,
                 }}
-                showsMyLocationButton={true} // Show button to re-center
+                showsMyLocationButton
               >
-                {/* --- MODIFIED: Custom User Marker --- */}
                 <Marker coordinate={location} title="You are here">
                   <View style={[styles.userMarkerOuter, { backgroundColor: colors.primaryButton }]}>
-                    <Image 
-                      source={{ uri: userProfilePic || 'https://placehold.co/60x60/FFF/FFF?text=.' }} // Default if no pic
+                    <Image
+                      source={{
+                        uri: userProfilePic || "https://placehold.co/60x60/FFF/FFF?text=.",
+                      }}
                       style={styles.userMarkerImage}
                     />
                   </View>
                 </Marker>
-                
-                {/* Render *nearby* worker markers */}
+
                 {renderWorkerMarkers()}
               </MapView>
             ) : (
               <View style={styles.mapLoading}>
                 {locationError ? (
-                  <Text style={{color: colors.subText, textAlign: 'center'}}>{locationError}</Text>
+                  <Text style={{ color: colors.subText, textAlign: "center" }}>
+                    {locationError}
+                  </Text>
                 ) : (
                   <>
                     <ActivityIndicator size="large" color={colors.primaryButton} />
-                    <Text style={{marginTop: 10, color: colors.subText}}>Finding nearby specialists...</Text>
+                    <Text style={{ marginTop: 10, color: colors.subText }}>
+                      Finding nearby specialists...
+                    </Text>
                   </>
                 )}
               </View>
             )}
           </View>
-          {/* --- */}
 
           {renderMyAppointments()}
         </ScrollView>
 
-        {/* Tab Bar Area */}
         <View style={[styles.tabBarContainer, { borderTopColor: colors.inputBorder }]}>
-            <View style={[styles.tabBar, { backgroundColor: colors.cardBackground }]}>
-            <TouchableOpacity
-                onPress={() => router.push("/")}
-                style={styles.iconButton}
-            >
-                <Ionicons name="home-outline" size={26} color={colors.subText} />
+          <View style={[styles.tabBar, { backgroundColor: colors.cardBackground }]}>
+            <TouchableOpacity onPress={() => router.push("/")} style={styles.iconButton}>
+              <Ionicons name="home-outline" size={26} color={colors.subText} />
             </TouchableOpacity>
-            <TouchableOpacity
-                onPress={handleTabPress}
-                style={styles.iconButton}
-            >
-                <Ionicons name={isLoggedIn ? "log-out-outline" : "log-in-outline"} size={26} color={colors.subText} />
+
+            <TouchableOpacity onPress={handleTabPress} style={styles.iconButton}>
+              <Ionicons
+                name={isLoggedIn ? "log-out-outline" : "log-in-outline"}
+                size={26}
+                color={colors.subText}
+              />
             </TouchableOpacity>
-            </View>
+          </View>
         </View>
       </LinearGradient>
     </SafeAreaView>
   );
 }
 
-// --- MODIFIED: Styles ---
 const styles = StyleSheet.create({
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
     paddingHorizontal: 15,
     paddingVertical: 10,
-    alignItems: "center"
+    alignItems: "center",
   },
   headerIcon: {
     padding: 5,
   },
-  title: { fontSize: 24, fontWeight: "bold", flex: 1, textAlign: 'center' },
-  
+  title: {
+    fontSize: 24,
+    fontWeight: "bold",
+    flex: 1,
+    textAlign: "center",
+  },
+
   locationBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     padding: 12,
     borderRadius: 10,
     marginHorizontal: 15,
     marginTop: 5,
     elevation: 2,
-    shadowColor: '#000',
+    shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
     shadowRadius: 2,
   },
   locationText: {
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: "600",
     marginLeft: 8,
-    flex: 1, 
+    flex: 1,
   },
-  
-  dropdownContainer: {
-    paddingHorizontal: 15,
-    paddingTop: 20, 
+
+  categoryGalleryWrapper: {
+    paddingVertical: 15,
+    alignItems: "center",
+    marginBottom: 5,
+    height: 170,
+    width: screenWidth,
   },
-  dropdown: {
-     borderWidth: 1,
-     borderRadius: 15,
-     paddingVertical: 10,
-     height: 60, 
+  categoryGalleryContainer: {
+    paddingHorizontal: 0,
+    alignItems: "flex-start",
   },
-  dropdownPlaceholder: {
-      fontSize: 16,
-      fontWeight: '600',
-      textAlign: 'center', // Center the placeholder text
+  categoryItem: {
+    backgroundColor: "transparent",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 10,
+    elevation: 0,
   },
-  dropdownText: {
-      fontSize: 16,
-      fontWeight: '600',
-      // Removed flex and margin, container will center it
+  galleryImage: {
+    width: 160,
+    height: 100,
+    resizeMode: "contain",
   },
-  dropdownListContainer: {
-      borderWidth: 1,
-      borderRadius: 15,
+  serviceTitle: {
+    fontSize: 20,
+    fontWeight: "600",
+    marginTop: 8,
+    textAlign: "center",
   },
-  dropdownIcon: {
-      width: 24,
-      height: 24,
-      resizeMode: 'contain',
-      marginRight: 10, // Add space between icon and text
-  },
-  dropdownCenteredItem: {
-    flexDirection: 'row', // Lay out icon and text in a row
-    justifyContent: 'center', // Center the group horizontally
-    alignItems: 'center', // Center the group vertically
-    paddingHorizontal: 15,
-  },
-  
+
   button: {
     alignSelf: "center",
     marginTop: 20,
@@ -1014,15 +1323,19 @@ const styles = StyleSheet.create({
     width: screenWidth * 0.75,
     alignItems: "center",
     elevation: 2,
-    shadowColor: '#000',
+    shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.2,
     shadowRadius: 2,
   },
   buttonDisabled: {
-      opacity: 0.5,
+    opacity: 0.5,
   },
-  buttonText: { fontSize: 16, fontWeight: "bold" },
+  buttonText: {
+    fontSize: 16,
+    fontWeight: "bold",
+  },
+
   emergencyButton: {
     alignSelf: "center",
     marginTop: 15,
@@ -1035,14 +1348,22 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "center",
     elevation: 2,
-    shadowColor: '#000',
+    shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.2,
     shadowRadius: 2,
   },
-  emergencyText: { fontSize: 16, fontWeight: "bold", color: "white", marginRight: 8 },
-  phoneIcon: { width: 20, height: 20 },
-  
+  emergencyText: {
+    fontSize: 16,
+    fontWeight: "bold",
+    color: "white",
+    marginRight: 8,
+  },
+  phoneIcon: {
+    width: 20,
+    height: 20,
+  },
+
   mapContainer: {
     marginTop: 25,
     height: 250,
@@ -1050,25 +1371,24 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     marginHorizontal: 15,
     borderWidth: 1,
-    borderColor: '#ddd',
-    backgroundColor: '#f0f0f0' 
+    borderColor: "#ddd",
+    backgroundColor: "#f0f0f0",
   },
   mapLoading: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
+    justifyContent: "center",
+    alignItems: "center",
     padding: 20,
   },
-  
-  // --- CUSTOM MARKER STYLES ---
+
   workerMarkerImage: {
     width: 40,
     height: 40,
-    resizeMode: 'contain',
-    borderRadius: 20, 
+    resizeMode: "contain",
+    borderRadius: 20,
     borderWidth: 2,
-    borderColor: '#fff',
-    shadowColor: '#000',
+    borderColor: "#fff",
+    shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.3,
     shadowRadius: 3,
@@ -1078,25 +1398,24 @@ const styles = StyleSheet.create({
     height: 44,
     borderRadius: 22,
     padding: 3,
-    shadowColor: '#000',
+    shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.3,
     shadowRadius: 3,
     elevation: 5,
-    justifyContent: 'center',
-    alignItems: 'center',
+    justifyContent: "center",
+    alignItems: "center",
   },
   userMarkerImage: {
     width: 38,
     height: 38,
-    borderRadius: 19, 
+    borderRadius: 19,
     borderWidth: 2,
-    borderColor: '#fff', 
+    borderColor: "#fff",
   },
-  // --- END OF CUSTOM MARKER STYLES ---
-  
+
   tabBarContainer: {
-    position: 'absolute',
+    position: "absolute",
     bottom: 0,
     left: 0,
     right: 0,
@@ -1106,24 +1425,22 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-around",
     paddingVertical: 12,
-    paddingBottom: Platform.OS === 'ios' ? 25 : 12,
+    paddingBottom: Platform.OS === "ios" ? 25 : 12,
   },
   iconButton: {
     padding: 10,
     borderRadius: 20,
-    alignItems: 'center',
+    alignItems: "center",
   },
-  iconPressed: { opacity: 0.7, transform: [{ scale: 0.95 }] },
 
-  // (All modal, list, and card styles are unchanged)
   modalBackdrop: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "rgba(0,0,0,0.6)",
   },
   modalContent: {
-    width: '90%',
+    width: "90%",
     maxWidth: 400,
     borderRadius: 15,
     padding: 25,
@@ -1131,32 +1448,41 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
     shadowRadius: 4,
-    maxHeight: '85%', // --- MODIFIED: Added for scrollview in modal ---
+    maxHeight: "85%",
   },
   modalTitle: {
     fontSize: 22,
-    fontWeight: 'bold',
-    textAlign: 'center',
+    fontWeight: "bold",
+    textAlign: "center",
     marginBottom: 15,
   },
   modalMessage: {
     fontSize: 16,
-    textAlign: 'center',
+    textAlign: "center",
     marginBottom: 25,
   },
+  modalTextInput: {
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 10,
+    fontSize: 14,
+    minHeight: 60,
+    textAlignVertical: "top",
+    marginBottom: 20,
+  },
   modalButtonContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    justifyContent: "space-between",
     marginTop: 10,
     gap: 10,
-    flexWrap: 'wrap',
+    flexWrap: "wrap",
   },
   modalButton: {
     borderRadius: 10,
     paddingVertical: 12,
     paddingHorizontal: 20,
     minWidth: 100,
-    alignItems: 'center',
+    alignItems: "center",
     elevation: 2,
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.2,
@@ -1165,70 +1491,75 @@ const styles = StyleSheet.create({
   },
   modalButtonText: {
     fontSize: 16,
-    fontWeight: '600',
-    color: 'white',
+    fontWeight: "600",
+    color: "white",
   },
   modalButtonSmall: {
     flex: 1,
     borderRadius: 8,
     paddingVertical: 10,
     marginHorizontal: 4,
-    alignItems: 'center',
+    alignItems: "center",
     elevation: 1,
   },
   proposalDetail: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    justifyContent: "space-between",
     paddingVertical: 5,
     borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+    borderBottomColor: "#eee",
     marginHorizontal: 10,
-    alignItems: 'center', // --- MODIFIED: Added ---
+    alignItems: "center",
   },
   proposalLabel: {
     fontSize: 15,
-    fontWeight: '500',
+    fontWeight: "500",
   },
   proposalValue: {
     fontSize: 15,
-    fontWeight: 'bold',
+    fontWeight: "bold",
   },
+
   listContainer: {
     marginTop: 30,
     paddingHorizontal: 15,
   },
   listHeader: {
     fontSize: 20,
-    fontWeight: 'bold',
+    fontWeight: "bold",
     marginBottom: 15,
   },
   emptyListText: {
-    textAlign: 'center',
-    fontStyle: 'italic',
+    textAlign: "center",
+    fontStyle: "italic",
     fontSize: 16,
     paddingVertical: 30,
   },
   appointmentCard: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
     padding: 15,
     borderRadius: 12,
     borderWidth: 1,
     marginBottom: 12,
     elevation: 1,
-    shadowColor: '#000',
+    shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
     shadowRadius: 2,
   },
-   appointmentDetails: {
+  appointmentDetails: {
     flex: 1,
     marginRight: 10,
   },
+  cardActionColumn: {
+    alignItems: "flex-end",
+    justifyContent: "flex-start",
+  },
   appointmentService: {
     fontSize: 16,
-    fontWeight: 'bold',
+    fontWeight: "bold",
   },
   appointmentDate: {
     fontSize: 14,
@@ -1236,19 +1567,18 @@ const styles = StyleSheet.create({
   },
   appointmentWorker: {
     fontSize: 13,
-    fontStyle: 'italic',
+    fontStyle: "italic",
   },
-  // --- NEW STYLE ---
   appointmentTotal: {
     fontSize: 14,
-    fontWeight: 'bold',
+    fontWeight: "bold",
     marginVertical: 3,
   },
   appointmentStatus: {
     fontSize: 13,
-    fontWeight: '500',
-    marginTop: 8, // --- MODIFIED: Increased margin ---
-    textTransform: 'capitalize',
+    fontWeight: "500",
+    marginTop: 8,
+    textTransform: "capitalize",
   },
   actionButton: {
     paddingHorizontal: 14,
@@ -1256,22 +1586,37 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   actionButtonText: {
-    fontWeight: 'bold',
+    fontWeight: "bold",
     fontSize: 14,
   },
   cancelButton: {
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 8,
-    backgroundColor: '#fee2e2',
+    backgroundColor: "#fee2e2",
   },
   cancelButtonText: {
-    color: '#ef4444',
-    fontWeight: 'bold',
+    color: "#ef4444",
+    fontWeight: "bold",
     fontSize: 14,
   },
-  
-  // --- NEW STYLES for Price Breakdown in Card/Modal ---
+
+  chatButton: {
+    marginTop: 12,
+    alignSelf: "flex-start",
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  chatButtonText: {
+    color: "#fff",
+    fontWeight: "700",
+    fontSize: 14,
+  },
+
   priceBreakdownBox: {
     marginTop: 10,
     paddingTop: 10,
@@ -1279,15 +1624,15 @@ const styles = StyleSheet.create({
   },
   priceBreakdownTitle: {
     fontSize: 14,
-    fontWeight: 'bold',
+    fontWeight: "bold",
     marginBottom: 5,
   },
   priceBreakdownRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    justifyContent: "space-between",
     paddingVertical: 2,
   },
   priceBreakdownItemText: {
     fontSize: 13,
-  }
+  },
 });
