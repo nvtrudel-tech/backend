@@ -14,7 +14,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { socket } from "../../backend/lib/socket";
+import { socket } from "../lib/socket";
 
 const API_URL = "https://backend-tknm.onrender.com/api";
 
@@ -23,6 +23,7 @@ export default function AppointmentChatScreen() {
   const params = useLocalSearchParams();
 
   const [currentUser, setCurrentUser] = useState<any>(null);
+  const [conversation, setConversation] = useState<any>(null);
   const [messages, setMessages] = useState<any[]>([]);
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(true);
@@ -50,6 +51,102 @@ export default function AppointmentChatScreen() {
     return Array.isArray(value) ? value[0] : value;
   }, [params.selfUserId]);
 
+  const effectiveSelfId = useMemo(() => {
+    if (selfUserId) return String(selfUserId);
+    if (currentUser?._id) return String(currentUser._id);
+    return "";
+  }, [selfUserId, currentUser]);
+
+  const sortedMessages = useMemo(() => {
+    return [...messages].sort((a, b) => {
+      const timeA = new Date(a?.createdAt || 0).getTime();
+      const timeB = new Date(b?.createdAt || 0).getTime();
+      return timeA - timeB;
+    });
+  }, [messages]);
+
+  const extractId = (value: any) => {
+    if (!value) return "";
+    if (typeof value === "object") {
+      return String(value._id || value.id || "");
+    }
+    return String(value);
+  };
+
+  const getSenderId = (message: any) => {
+    if (!message) return "";
+
+    const candidates = [
+      message?.sender?._id,
+      message?.sender,
+      message?.senderId,
+      message?.from?._id,
+      message?.from,
+      message?.user?._id,
+      message?.user,
+      message?.author?._id,
+      message?.author,
+    ];
+
+    for (const candidate of candidates) {
+      const id = extractId(candidate);
+      if (id) return id;
+    }
+
+    return "";
+  };
+
+  const getReceiverId = (message: any) => {
+    if (!message) return "";
+
+    const candidates = [
+      message?.receiver?._id,
+      message?.receiver,
+      message?.receiverId,
+      message?.to?._id,
+      message?.to,
+    ];
+
+    for (const candidate of candidates) {
+      const id = extractId(candidate);
+      if (id) return id;
+    }
+
+    return "";
+  };
+
+  const isMessageMine = (message: any) => {
+    const senderId = getSenderId(message);
+    const receiverId = getReceiverId(message);
+
+    if (senderId && effectiveSelfId && senderId === effectiveSelfId) {
+      return true;
+    }
+
+    if (senderId && otherUserId && senderId === String(otherUserId)) {
+      return false;
+    }
+
+    if (receiverId && otherUserId && receiverId === String(otherUserId)) {
+      return true;
+    }
+
+    if (receiverId && effectiveSelfId && receiverId === effectiveSelfId) {
+      return false;
+    }
+
+    console.log("UNRESOLVED MESSAGE SIDE", {
+      message,
+      senderId,
+      receiverId,
+      effectiveSelfId,
+      otherUserId,
+      conversation,
+    });
+
+    return false;
+  };
+
   useEffect(() => {
     let mounted = true;
 
@@ -61,7 +158,7 @@ export default function AppointmentChatScreen() {
         if (!mounted) return;
         setCurrentUser(parsedUser);
 
-        if (!parsedUser?._id || !appointmentId) {
+        if (!appointmentId) {
           setLoading(false);
           return;
         }
@@ -74,6 +171,11 @@ export default function AppointmentChatScreen() {
           throw new Error("This chat is not available.");
         }
 
+        const convData = await convRes.json();
+        if (mounted) {
+          setConversation(convData);
+        }
+
         const msgRes = await fetch(`${API_URL}/chat/messages/${appointmentId}`);
         if (!msgRes.ok) {
           throw new Error("Failed to load messages.");
@@ -84,10 +186,32 @@ export default function AppointmentChatScreen() {
         if (!mounted) return;
         setMessages(Array.isArray(data) ? data : []);
 
-        socket.emit("join_conversation", {
-          appointmentId: String(appointmentId),
-          userId: String(selfUserId || parsedUser._id),
+        console.log("CHAT PARAMS", {
+          appointmentId,
+          selfUserId,
+          otherUserId,
+          parsedUserId: parsedUser?._id,
         });
+
+        console.log("CHAT CONVERSATION", convData);
+        console.log("CHAT MESSAGES RAW", data);
+
+        const activeUserId = selfUserId
+          ? String(selfUserId)
+          : parsedUser?._id
+          ? String(parsedUser._id)
+          : "";
+
+        if (activeUserId) {
+          await fetch(`${API_URL}/chat/read/${appointmentId}/${activeUserId}`, {
+            method: "PUT",
+          }).catch(() => {});
+
+          socket.emit("join_conversation", {
+            appointmentId: String(appointmentId),
+            userId: activeUserId,
+          });
+        }
       } catch (error) {
         console.error("Chat init error:", error);
       } finally {
@@ -104,6 +228,8 @@ export default function AppointmentChatScreen() {
           : message?.appointment;
 
       if (String(msgAppointmentId) !== String(appointmentId)) return;
+
+      console.log("RECEIVED SOCKET MESSAGE", message);
 
       setMessages((prev) => {
         const exists = prev.some((m) => String(m._id) === String(message._id));
@@ -122,22 +248,17 @@ export default function AppointmentChatScreen() {
       mounted = false;
       socket.off("receive_message", onReceiveMessage);
     };
-  }, [appointmentId, selfUserId]);
+  }, [appointmentId, selfUserId, otherUserId]);
 
   const sendMessage = () => {
-    const senderId = selfUserId
-      ? String(selfUserId)
-      : currentUser?._id
-      ? String(currentUser._id)
-      : "";
-
+    const senderId = effectiveSelfId;
     const receiverId = otherUserId ? String(otherUserId) : "";
 
     if (!text.trim() || !senderId || !receiverId || !appointmentId) {
       return;
     }
 
-    console.log("send_message payload:", {
+    console.log("SEND MESSAGE PAYLOAD", {
       appointmentId: String(appointmentId),
       senderId,
       receiverId,
@@ -157,6 +278,8 @@ export default function AppointmentChatScreen() {
       (response: any) => {
         setSending(false);
 
+        console.log("SEND MESSAGE RESPONSE", response);
+
         if (!response?.ok) {
           console.log("send_message failed:", response?.message);
           return;
@@ -171,29 +294,55 @@ export default function AppointmentChatScreen() {
     );
   };
 
-  const effectiveSelfId = selfUserId
-    ? String(selfUserId)
-    : currentUser?._id
-    ? String(currentUser._id)
-    : "";
-
   const renderItem = ({ item }: any) => {
-    const senderId =
-      typeof item?.sender === "object" ? item?.sender?._id : item?.sender;
+    const senderId = getSenderId(item);
+    const receiverId = getReceiverId(item);
+    const mine = isMessageMine(item);
 
-    const isMine = String(senderId) === String(effectiveSelfId);
+    console.log("RENDER MESSAGE", {
+      text: item?.text,
+      senderId,
+      receiverId,
+      effectiveSelfId,
+      otherUserId,
+      mine,
+      raw: item,
+    });
 
     return (
-      <View style={[styles.messageRow, isMine ? styles.messageRowMine : styles.messageRowOther]}>
-        <View style={[styles.messageBubble, isMine ? styles.myBubble : styles.otherBubble]}>
-          <Text style={[styles.messageText, isMine ? styles.myMessageText : styles.otherMessageText]}>
-            {item.text}
+      <View
+        style={[
+          styles.messageRow,
+          mine ? styles.messageRowMine : styles.messageRowOther,
+        ]}
+      >
+        <View
+          style={[
+            styles.messageBubble,
+            mine ? styles.myBubble : styles.otherBubble,
+          ]}
+        >
+          <Text
+            style={[
+              styles.messageText,
+              mine ? styles.myMessageText : styles.otherMessageText,
+            ]}
+          >
+            {item?.text || ""}
           </Text>
-          <Text style={[styles.timeText, isMine ? styles.myTimeText : styles.otherTimeText]}>
-            {new Date(item.createdAt).toLocaleTimeString([], {
-              hour: "2-digit",
-              minute: "2-digit",
-            })}
+
+          <Text
+            style={[
+              styles.timeText,
+              mine ? styles.myTimeText : styles.otherTimeText,
+            ]}
+          >
+            {item?.createdAt
+              ? new Date(item.createdAt).toLocaleTimeString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })
+              : ""}
           </Text>
         </View>
       </View>
@@ -213,6 +362,7 @@ export default function AppointmentChatScreen() {
       <KeyboardAvoidingView
         style={styles.container}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 10 : 0}
       >
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
@@ -227,10 +377,11 @@ export default function AppointmentChatScreen() {
 
         <FlatList
           ref={flatListRef}
-          data={messages}
-          keyExtractor={(item, index) => String(item._id || index)}
+          data={sortedMessages}
+          keyExtractor={(item, index) => String(item?._id || index)}
           renderItem={renderItem}
           contentContainerStyle={styles.listContent}
+          showsVerticalScrollIndicator={false}
           onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
         />
 
@@ -238,6 +389,7 @@ export default function AppointmentChatScreen() {
           <TextInput
             style={styles.input}
             placeholder="Type a message..."
+            placeholderTextColor="#6b7280"
             value={text}
             onChangeText={setText}
             multiline
@@ -264,11 +416,11 @@ export default function AppointmentChatScreen() {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: "#ffffff",
+    backgroundColor: "#efeae2",
   },
   container: {
     flex: 1,
-    backgroundColor: "#ffffff",
+    backgroundColor: "#efeae2",
   },
   centered: {
     flex: 1,
@@ -303,12 +455,13 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   listContent: {
-    paddingHorizontal: 12,
-    paddingVertical: 14,
+    paddingHorizontal: 10,
+    paddingVertical: 12,
     paddingBottom: 24,
   },
   messageRow: {
-    marginBottom: 10,
+    width: "100%",
+    marginBottom: 8,
     flexDirection: "row",
   },
   messageRowMine: {
@@ -319,38 +472,41 @@ const styles = StyleSheet.create({
   },
   messageBubble: {
     maxWidth: "78%",
-    borderRadius: 16,
     paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingVertical: 8,
+    borderRadius: 16,
   },
   myBubble: {
-    backgroundColor: "#2563eb",
-    borderBottomRightRadius: 6,
+    backgroundColor: "#dcf8c6",
+    borderBottomRightRadius: 4,
   },
   otherBubble: {
-    backgroundColor: "#f3f4f6",
-    borderBottomLeftRadius: 6,
+    backgroundColor: "#ffffff",
+    borderBottomLeftRadius: 4,
   },
   messageText: {
     fontSize: 15,
     lineHeight: 20,
   },
   myMessageText: {
-    color: "#ffffff",
+    color: "#111827",
   },
   otherMessageText: {
     color: "#111827",
   },
   timeText: {
     fontSize: 11,
-    marginTop: 5,
-    alignSelf: "flex-end",
+    marginTop: 4,
   },
   myTimeText: {
-    color: "rgba(255,255,255,0.8)",
+    color: "#6b7280",
+    textAlign: "right",
+    alignSelf: "flex-end",
   },
   otherTimeText: {
     color: "#6b7280",
+    textAlign: "left",
+    alignSelf: "flex-start",
   },
   inputBar: {
     flexDirection: "row",
@@ -374,6 +530,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     backgroundColor: "#fff",
     marginRight: 8,
+    color: "#111827",
   },
   sendButton: {
     width: 44,

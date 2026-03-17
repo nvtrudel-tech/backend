@@ -20,7 +20,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  View
+  View,
 } from "react-native";
 import MapView, { Marker } from "react-native-maps";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -98,6 +98,8 @@ export default function ElectricianAppView() {
 
   const [myAppointments, setMyAppointments] = useState<any[]>([]);
   const [isLoadingAppts, setIsLoadingAppts] = useState(true);
+  const [unreadCounts, setUnreadCounts] = useState<{ [key: string]: number }>({});
+
   const [isCancelModalVisible, setIsCancelModalVisible] = useState(false);
   const [appointmentToCancel, setAppointmentToCancel] = useState<any | null>(null);
   const [isCancelling, setIsCancelling] = useState(false);
@@ -230,9 +232,11 @@ export default function ElectricianAppView() {
     }
 
     fetchAppointments(userId);
+    fetchUnreadCounts(userId);
 
     const interval = setInterval(() => {
       fetchAppointments(userId);
+      fetchUnreadCounts(userId);
     }, 5000);
 
     return () => clearInterval(interval);
@@ -319,6 +323,17 @@ export default function ElectricianAppView() {
       console.error("Poll appointments error:", error);
     } finally {
       setIsLoadingAppts(false);
+    }
+  };
+
+  const fetchUnreadCounts = async (currentUserId: string) => {
+    try {
+      const response = await fetch(`${API_URL}/chat/unread/${currentUserId}`);
+      if (!response.ok) return;
+      const data = await response.json();
+      setUnreadCounts(data || {});
+    } catch (error) {
+      console.error("Unread count fetch error:", error);
     }
   };
 
@@ -537,8 +552,8 @@ export default function ElectricianAppView() {
         status === "confirmed"
           ? "Price accepted! Your appointment is confirmed."
           : status === "pending"
-            ? "Price rejected. The specialist will be notified to send a new proposal."
-            : "Appointment cancelled."
+          ? "Price rejected. The specialist will be notified to send a new proposal."
+          : "Appointment cancelled."
       );
 
       fetchAppointments(userId);
@@ -553,10 +568,7 @@ export default function ElectricianAppView() {
   };
 
   const openAppointmentChat = async (app: any) => {
-    const workerId = app?.worker?._id || app?.worker;
-    const workerName = app?.worker?.name || "Specialist";
-
-    if (!app?._id || !workerId) {
+    if (!app?._id || !app?.worker?._id) {
       Alert.alert("Chat unavailable", "A worker must be assigned before chat can open.");
       return;
     }
@@ -564,7 +576,6 @@ export default function ElectricianAppView() {
     try {
       const response = await fetch(`${API_URL}/chat/conversation/${app._id}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
       });
 
       const data = await response.json().catch(() => ({}));
@@ -578,14 +589,14 @@ export default function ElectricianAppView() {
         pathname: "/chat/[appointmentId]",
         params: {
           appointmentId: String(app._id),
-          otherUserId: String(workerId),
-          otherUserName: workerName,
+          otherUserId: String(app.worker._id),
+          otherUserName: app.worker?.name || "Specialist",
           appointmentStatus: app.status || "",
         },
       });
     } catch (error: any) {
       console.error("Open chat error:", error);
-      Alert.alert("Chat error", error.message || "Could not open chat.");
+      Alert.alert("Error", error.message || "Could not open chat.");
     }
   };
 
@@ -922,10 +933,9 @@ export default function ElectricianAppView() {
     };
 
     const canChat = (app: any) => {
-      const workerId = app?.worker?._id || app?.worker;
       return (
         !!app?._id &&
-        !!workerId &&
+        !!app?.worker?._id &&
         ["pending", "confirmed", "price_pending", "en_route"].includes(app.status)
       );
     };
@@ -1016,6 +1026,14 @@ export default function ElectricianAppView() {
                   >
                     <Ionicons name="chatbubble-ellipses-outline" size={16} color="#fff" />
                     <Text style={styles.chatButtonText}>Chat</Text>
+
+                    {(unreadCounts[app._id] || 0) > 0 && (
+                      <View style={styles.unreadBadge}>
+                        <Text style={styles.unreadBadgeText}>
+                          {unreadCounts[app._id] > 99 ? "99+" : unreadCounts[app._id]}
+                        </Text>
+                      </View>
+                    )}
                   </TouchableOpacity>
                 )}
               </View>
@@ -1615,6 +1633,21 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontWeight: "700",
     fontSize: 14,
+  },
+  unreadBadge: {
+    marginLeft: 8,
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: "#ef4444",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 6,
+  },
+  unreadBadgeText: {
+    color: "#fff",
+    fontSize: 11,
+    fontWeight: "700",
   },
 
   priceBreakdownBox: {

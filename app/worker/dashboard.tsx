@@ -1,15 +1,17 @@
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import Slider from "@react-native-community/slider";
 import DateTimePicker from "@react-native-community/datetimepicker";
+import Slider from "@react-native-community/slider";
 import * as ImagePicker from "expo-image-picker";
 import * as Location from "expo-location";
 import * as Notifications from "expo-notifications";
 import { useRouter } from "expo-router";
-import React, { useEffect, useState, useRef, useMemo } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   Image,
+  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
@@ -18,9 +20,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  View,
-  ActivityIndicator,
-  KeyboardAvoidingView,
+  View
 } from "react-native";
 import MapView from "react-native-maps";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -73,6 +73,7 @@ export default function WorkerDashboard() {
 
   const [appointments, setAppointments] = useState<any[]>([]);
   const [clockedIn, setClockedIn] = useState(false);
+  const [unreadCounts, setUnreadCounts] = useState<{ [key: string]: number }>({});
 
   const [location, setLocation] = useState<Location.LocationObjectCoords | null>(null);
   const [locationError, setLocationError] = useState<string | null>(null);
@@ -94,6 +95,10 @@ export default function WorkerDashboard() {
   const fetchAppointments = async (currentWorkerId: string) => {
     try {
       const appointmentsResponse = await fetch(`${API_URL}/appointments`);
+      if (!appointmentsResponse.ok) {
+        throw new Error("Failed to fetch appointments");
+      }
+
       const allAppointments = await appointmentsResponse.json();
 
       const workerAppointments = allAppointments.filter(
@@ -138,6 +143,17 @@ export default function WorkerDashboard() {
     }
   };
 
+  const fetchUnreadCounts = async (currentWorkerId: string) => {
+    try {
+      const response = await fetch(`${API_URL}/chat/unread/${currentWorkerId}`);
+      if (!response.ok) return;
+      const data = await response.json();
+      setUnreadCounts(data || {});
+    } catch (error) {
+      console.error("Unread count fetch error:", error);
+    }
+  };
+
   useEffect(() => {
     const initialize = async () => {
       const userString = await AsyncStorage.getItem("user");
@@ -150,33 +166,39 @@ export default function WorkerDashboard() {
 
       try {
         const workersResponse = await fetch(`${API_URL}/workers`);
+        if (!workersResponse.ok) {
+          throw new Error("Failed to fetch workers");
+        }
+
         const allWorkers = await workersResponse.json();
         const currentWorker = allWorkers.find((w: any) => w.email === user.email);
 
-        if (currentWorker) {
-          setWorkerProfile(currentWorker);
-          setWorkerId(currentWorker._id);
-          setName(currentWorker.name || "");
-          setAge(currentWorker.age ? String(currentWorker.age) : "");
-          setGender(currentWorker.gender || "");
-          setSelectedSkill(currentWorker.skills?.[0] || null);
-          setMaxDistance(currentWorker.maxDistance || 25);
-          setProfileImage(
-            currentWorker.profileImageBase64 || currentWorker.profileImageUrl
-          );
-
-          const isClockedIn = currentWorker.currentClock?.clockedIn || false;
-          setClockedIn(isClockedIn);
-
-          await fetchAppointments(currentWorker._id);
-          registerForPushNotificationsAsync(currentWorker._id);
-          await getInitialLocation(currentWorker._id);
-
-          if (isClockedIn) {
-            await startLocationTracking(currentWorker._id);
-          }
-        } else {
+        if (!currentWorker) {
           Alert.alert("Error", "Could not find a worker profile for this user.");
+          return;
+        }
+
+        setWorkerProfile(currentWorker);
+        setWorkerId(currentWorker._id);
+        setName(currentWorker.name || "");
+        setAge(currentWorker.age ? String(currentWorker.age) : "");
+        setGender(currentWorker.gender || "");
+        setSelectedSkill(currentWorker.skills?.[0] || null);
+        setMaxDistance(currentWorker.maxDistance || 25);
+        setProfileImage(
+          currentWorker.profileImageBase64 || currentWorker.profileImageUrl || null
+        );
+
+        const isClockedIn = currentWorker.currentClock?.clockedIn || false;
+        setClockedIn(isClockedIn);
+
+        await fetchAppointments(currentWorker._id);
+        await fetchUnreadCounts(currentWorker._id);
+        await registerForPushNotificationsAsync(currentWorker._id);
+        await getInitialLocation(currentWorker._id);
+
+        if (isClockedIn) {
+          await startLocationTracking(currentWorker._id);
         }
       } catch (error) {
         console.error("Failed to fetch initial data:", error);
@@ -193,8 +215,12 @@ export default function WorkerDashboard() {
   useEffect(() => {
     if (!workerId) return;
 
+    fetchAppointments(workerId);
+    fetchUnreadCounts(workerId);
+
     const interval = setInterval(() => {
       fetchAppointments(workerId);
+      fetchUnreadCounts(workerId);
     }, 5000);
 
     return () => clearInterval(interval);
@@ -277,7 +303,7 @@ export default function WorkerDashboard() {
   };
 
   async function registerForPushNotificationsAsync(currentWorkerId: string) {
-    let token;
+    let token: string | undefined;
 
     if (Platform.OS === "android") {
       await Notifications.setNotificationChannelAsync("default", {
@@ -333,7 +359,7 @@ export default function WorkerDashboard() {
       base64: true,
     });
 
-    if (!result.canceled && result.assets && result.assets[0].base64) {
+    if (!result.canceled && result.assets?.[0]?.base64) {
       const base64Image = `data:image/jpeg;base64,${result.assets[0].base64}`;
       setProfileImage(base64Image);
       Alert.alert("Success", "Profile picture updated. Press 'Save Profile' to apply.");
@@ -447,12 +473,10 @@ export default function WorkerDashboard() {
           price: String(item.price),
         }))
       );
+    } else if (job.workerPrice) {
+      setPriceBreakdown([{ item: "Service Cost", price: String(job.workerPrice) }]);
     } else {
-      if (job.workerPrice) {
-        setPriceBreakdown([{ item: "Service Cost", price: String(job.workerPrice) }]);
-      } else {
-        setPriceBreakdown([{ item: "", price: "" }]);
-      }
+      setPriceBreakdown([{ item: "", price: "" }]);
     }
 
     setDateTimeModalVisible(true);
@@ -525,14 +549,24 @@ export default function WorkerDashboard() {
         Alert.alert("Success", `Job status updated to ${status}.`);
       }
 
-      if (workerId) await fetchAppointments(workerId);
+      if (workerId) {
+        await fetchAppointments(workerId);
+        await fetchUnreadCounts(workerId);
+      }
     } catch (error: any) {
       Alert.alert("Error", error.message || "Could not update job status.");
-      if (workerId) await fetchAppointments(workerId);
+      if (workerId) {
+        await fetchAppointments(workerId);
+        await fetchUnreadCounts(workerId);
+      }
     }
   };
 
-  const handleUpdateJobStatus = async (appointmentId: string, status: string, job?: any) => {
+  const handleUpdateJobStatus = async (
+    appointmentId: string,
+    status: string,
+    job?: any
+  ) => {
     if (status === "en_route") {
       performStatusUpdate(appointmentId, status);
       return;
@@ -566,7 +600,7 @@ export default function WorkerDashboard() {
     const customerId = job?.customer?._id || job?.customer;
     const customerName = job?.customer?.name || "Customer";
 
-    if (!job?._id || !customerId) {
+    if (!job?._id || !customerId || !workerId) {
       Alert.alert("Chat unavailable", "A customer must be assigned before chat can open.");
       return;
     }
@@ -579,6 +613,7 @@ export default function WorkerDashboard() {
 
       const data = await response.json().catch(() => ({}));
       console.log("worker chat conversation response:", response.status, data);
+      console.log("openJobChat selfUserId:", workerId);
 
       if (!response.ok) {
         throw new Error(data.message || `Chat route failed with status ${response.status}`);
@@ -591,6 +626,7 @@ export default function WorkerDashboard() {
           otherUserId: String(customerId),
           otherUserName: customerName,
           appointmentStatus: job.status || "",
+          selfUserId: String(workerId),
         },
       });
     } catch (error: any) {
@@ -725,9 +761,7 @@ export default function WorkerDashboard() {
   };
 
   const calculatedTotal = useMemo(() => {
-    return priceBreakdown.reduce((acc, item) => {
-      return acc + (parseFloat(item.price) || 0);
-    }, 0);
+    return priceBreakdown.reduce((acc, item) => acc + (parseFloat(item.price) || 0), 0);
   }, [priceBreakdown]);
 
   const renderDateTimeModal = () => {
@@ -755,6 +789,7 @@ export default function WorkerDashboard() {
                 <Text style={[styles.modalTitle, { color: colors.text, marginBottom: 10 }]}>
                   Propose Price & Schedule
                 </Text>
+
                 <Text
                   style={[
                     styles.modalSubtitle,
@@ -884,7 +919,6 @@ export default function WorkerDashboard() {
                       onChange={onDateChange}
                       minimumDate={new Date()}
                       style={styles.datePicker}
-                      textColor={colors.text}
                     />
                     <DateTimePicker
                       testID="timePicker"
@@ -894,7 +928,6 @@ export default function WorkerDashboard() {
                       display="spinner"
                       onChange={onTimeChange}
                       style={styles.datePicker}
-                      textColor={colors.text}
                     />
                   </>
                 )}
@@ -909,6 +942,7 @@ export default function WorkerDashboard() {
                     Cancel
                   </Text>
                 </TouchableOpacity>
+
                 <TouchableOpacity
                   onPress={handleConfirmSchedule}
                   style={[styles.modalButton, { backgroundColor: colors.primaryButton }]}
@@ -990,6 +1024,7 @@ export default function WorkerDashboard() {
               <Ionicons name="camera" size={20} color="white" />
             </View>
           </TouchableOpacity>
+
           <TextInput
             style={[
               styles.workerNameInput,
@@ -1201,6 +1236,7 @@ export default function WorkerDashboard() {
               <Text style={[styles.jobAddress, { color: colors.text, marginTop: 4 }]}>
                 Address: {job.address}
               </Text>
+
               <Text style={[styles.jobDescription, { color: colors.subText }]}>
                 Description: {job.description}
               </Text>
@@ -1212,6 +1248,14 @@ export default function WorkerDashboard() {
                 >
                   <Ionicons name="chatbubble-ellipses-outline" size={16} color="#fff" />
                   <Text style={styles.chatButtonText}>Chat with Customer</Text>
+
+                  {(unreadCounts[job._id] || 0) > 0 && (
+                    <View style={styles.unreadBadge}>
+                      <Text style={styles.unreadBadgeText}>
+                        {unreadCounts[job._id] > 99 ? "99+" : unreadCounts[job._id]}
+                      </Text>
+                    </View>
+                  )}
                 </TouchableOpacity>
               )}
 
@@ -1597,5 +1641,20 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontWeight: "700",
     fontSize: 14,
+  },
+  unreadBadge: {
+    marginLeft: 8,
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: "#ef4444",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 6,
+  },
+  unreadBadgeText: {
+    color: "#fff",
+    fontSize: 11,
+    fontWeight: "700",
   },
 });

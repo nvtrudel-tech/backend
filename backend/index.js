@@ -1,10 +1,10 @@
-// index.js
 require("dotenv").config();
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
 const http = require("http");
 const { Server } = require("socket.io");
+const axios = require("axios");
 
 const authRoutes = require("./routes/auth");
 const appointmentRoutes = require("./routes/appointments");
@@ -14,6 +14,8 @@ const chatRoutes = require("./routes/chat");
 const Conversation = require("./models/Conversation");
 const Message = require("./models/Message");
 const Appointment = require("./models/Appointment");
+const User = require("./models/User");
+const Worker = require("./models/Worker");
 
 const app = express();
 const server = http.createServer(app);
@@ -32,6 +34,45 @@ app.use("/api/auth", authRoutes);
 app.use("/api/appointments", appointmentRoutes);
 app.use("/api/workers", workerRoutes);
 app.use("/api/chat", chatRoutes);
+
+// Push notification helper
+async function sendPushNotification(token, message, senderName = "New Message") {
+  if (!token) {
+    console.log("❌ No push token provided");
+    return;
+  }
+
+  try {
+    const payload = {
+      to: token,
+      sound: "default",
+      title: senderName,
+      body: message,
+      data: {
+        type: "chat",
+      },
+    };
+
+    console.log("📨 Push payload:", payload);
+
+    const response = await axios.post(
+      "https://exp.host/--/api/v2/push/send",
+      payload,
+      {
+        headers: {
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    console.log("✅ Push sent!", response.data);
+  } catch (error) {
+    console.error(
+      "❌ Push error:",
+      error?.response?.data || error.message || error
+    );
+  }
+}
 
 // Socket.IO
 const io = new Server(server, {
@@ -65,6 +106,10 @@ io.on("connection", (socket) => {
         return callback?.({ ok: false, message: "Missing required fields" });
       }
 
+      if (!mongoose.Types.ObjectId.isValid(appointmentId)) {
+        return callback?.({ ok: false, message: "Invalid appointment ID" });
+      }
+
       const appointment = await Appointment.findById(appointmentId);
 
       if (!appointment) {
@@ -81,25 +126,29 @@ io.on("connection", (socket) => {
         appointment.worker?.toString?.() ||
         null;
 
-      const sender = String(senderId);
-      const receiver = String(receiverId);
-      const allowedUsers = [String(customerId), String(workerId)];
-
-      console.log("socket auth check:", {
-        appointmentId,
-        sender,
-        receiver,
-        customerId,
-        workerId,
-        allowedUsers,
-      });
-
       if (!customerId || !workerId) {
         return callback?.({
           ok: false,
           message: "Appointment must have both customer and worker assigned",
         });
       }
+
+      const sender = String(senderId);
+      const receiver = String(receiverId);
+      const allowedUsers = [String(customerId), String(workerId)];
+
+      console.log("📩 send_message payload:", {
+        appointmentId,
+        sender,
+        receiver,
+        text: text.trim(),
+      });
+
+      console.log("🔐 socket auth check:", {
+        customerId,
+        workerId,
+        allowedUsers,
+      });
 
       if (!allowedUsers.includes(sender) || !allowedUsers.includes(receiver)) {
         return callback?.({ ok: false, message: "Not authorized for this chat" });
@@ -135,6 +184,26 @@ io.on("connection", (socket) => {
         .populate("receiver", "_id name");
 
       io.to(`appointment_${appointmentId}`).emit("receive_message", populatedMessage);
+
+      // Find receiver in User or Worker collection
+      let receiverDoc = await User.findById(receiver).select("expoPushToken name");
+      if (!receiverDoc) {
+        receiverDoc = await Worker.findById(receiver).select("expoPushToken name");
+      }
+
+      const receiverToken = receiverDoc?.expoPushToken || null;
+      const senderName =
+        typeof populatedMessage?.sender === "object" && populatedMessage?.sender?.name
+          ? populatedMessage.sender.name
+          : "New Message";
+
+      console.log("🔔 receiver token:", receiverToken || "none");
+
+      if (receiverToken) {
+        await sendPushNotification(receiverToken, text.trim(), senderName);
+      } else {
+        console.log("❌ No valid receiver token found");
+      }
 
       return callback?.({ ok: true, message: populatedMessage });
     } catch (error) {
