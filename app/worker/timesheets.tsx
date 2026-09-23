@@ -11,7 +11,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useTheme } from "../context/ThemeContext";
 
-const API_URL = "http://172.20.10.3:6000/api";
+const API_URL = "https://backend-tknm.onrender.com/api";
 
 interface WorkerListItem {
   _id: string;

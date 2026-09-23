@@ -40,7 +40,7 @@ import { useTheme } from "./context/ThemeContext";
 
 const screenWidth = Dimensions.get("window").width;
 const CATEGORY_VIEW_WIDTH = screenWidth;
-const API_URL = "http://172.20.10.3:6000/api";
+const API_URL = "https://backend-tknm.onrender.com/api";
 
 const skillIconMap: { [key: string]: any } = {
   Electrician: ElectricianIcon,

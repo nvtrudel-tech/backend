@@ -20,7 +20,7 @@ import * as ImagePicker from "expo-image-picker";
 import * as Notifications from "expo-notifications";
 import { socket } from "../lib/socket";
 
-const API_URL = "http://172.20.10.3:6000/api";
+const API_URL = "https://backend-tknm.onrender.com/api";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({

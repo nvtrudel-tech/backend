@@ -27,7 +27,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import ThemeToggle from "../components/ThemeToggle";
 import { useTheme } from "../context/ThemeContext";
 
-const API_URL = "http://172.20.10.3:6000/api";
+const API_URL = "https://backend-tknm.onrender.com/api";
 
 const ALL_SKILLS = [
   "Electrician",
