@@ -18,7 +18,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useTheme } from "./context/ThemeContext";
 import ThemeToggle from "./components/ThemeToggle";
 
-const API_URL = "https://backend-tknm.onrender.com/api";
+const API_URL = "http://172.20.10.3:6000/api";
 
 export default function Signup() {
   const router = useRouter();

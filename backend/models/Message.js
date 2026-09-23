@@ -27,7 +27,12 @@ const messageSchema = new mongoose.Schema(
     text: {
       type: String,
       trim: true,
-      required: true,
+      required: false,
+      default: "",
+    },
+    imageBase64: {
+      type: String,
+      default: null,
     },
     readBy: [
       {

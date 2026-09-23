@@ -18,7 +18,7 @@ import { useTheme } from "./context/ThemeContext";
 
 // It's a good practice to place the API URL in a configurable spot
 // Make sure this IP is accessible from your mobile device
-const API_URL = "https://backend-tknm.onrender.com/api/auth";
+const API_URL = "http://172.20.10.3:6000/api/auth";
 
 export default function Login() {
   const router = useRouter();
@@ -86,7 +86,7 @@ export default function Login() {
 
     } catch (error) {
       console.error("An error occurred during login:", error);
-      Alert.alert("Connection Error", "Unable to connect to the server. Please check your network connection.");
+      Alert.alert("Connection Error", `${error?.name || "Error"}: ${error?.message || String(error)}`);
     } finally {
       // Ensure loading is set to false whether the login succeeds or fails
       setLoading(false);

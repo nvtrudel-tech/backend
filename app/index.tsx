@@ -40,7 +40,7 @@ import { useTheme } from "./context/ThemeContext";
 
 const screenWidth = Dimensions.get("window").width;
 const CATEGORY_VIEW_WIDTH = screenWidth;
-const API_URL = "https://backend-tknm.onrender.com/api";
+const API_URL = "http://172.20.10.3:6000/api";
 
 const skillIconMap: { [key: string]: any } = {
   Electrician: ElectricianIcon,
@@ -237,7 +237,7 @@ export default function ElectricianAppView() {
     const interval = setInterval(() => {
       fetchAppointments(userId);
       fetchUnreadCounts(userId);
-    }, 5000);
+    }, 20000);
 
     return () => clearInterval(interval);
   }, [userId]);
@@ -252,7 +252,7 @@ export default function ElectricianAppView() {
 
     const interval = setInterval(() => {
       fetchNearbyWorkers(location.latitude, location.longitude);
-    }, 10000);
+    }, 30000);
 
     return () => clearInterval(interval);
   }, [location]);

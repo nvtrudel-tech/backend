@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Connexions",
+    "name": "ConnexionsII",
     "slug": "Connexions",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -12,20 +12,24 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.anonymous.ConnectionApp",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        }
       }
     },
     "android": {
       "package": "com.anonymous.ConnectionApp",
       "edgeToEdgeEnabled": true,
+      "softwareKeyboardLayoutMode": "resize",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/C9.png",
+        "backgroundColor": "#ffffff"
+      },
       "config": {
         "googleMaps": {
-          "apiKey": "AIzaSyC77v9FbWhLcGWaUDp1uSHu10CwD-GD1lQ"
+          "apiKey": "AIzaSyA8qkZYz4rAT2VtjvsLMVSSN_aosMYW0fM"
         }
-      },
-      "adaptiveIcon": {
-        "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
       }
     },
     "web": {

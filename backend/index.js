@@ -23,6 +23,7 @@ const server = http.createServer(app);
 // Middleware
 app.use(cors());
 app.use(express.json());
+app.use((req, res, next) => { console.log(`📥 ${new Date().toISOString()} ${req.method} ${req.originalUrl}`); next(); });
 
 // Health check
 app.get("/", (req, res) => {
@@ -34,6 +35,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/appointments", appointmentRoutes);
 app.use("/api/workers", workerRoutes);
 app.use("/api/chat", chatRoutes);
+app.use("/api/timeclock", require("./routes/timeclock"));
 
 // Push notification helper
 async function sendPushNotification(token, message, senderName = "New Message") {
@@ -100,9 +102,10 @@ io.on("connection", (socket) => {
 
   socket.on("send_message", async (payload, callback) => {
     try {
-      const { appointmentId, senderId, receiverId, text } = payload;
+      const { appointmentId, senderId, receiverId, text, imageBase64 } = payload;
+      const trimmedText = (text || "").trim();
 
-      if (!appointmentId || !senderId || !receiverId || !text || !text.trim()) {
+      if (!appointmentId || !senderId || !receiverId || (!trimmedText && !imageBase64)) {
         return callback?.({ ok: false, message: "Missing required fields" });
       }
 
@@ -141,7 +144,8 @@ io.on("connection", (socket) => {
         appointmentId,
         sender,
         receiver,
-        text: text.trim(),
+        text: trimmedText,
+        hasImage: !!imageBase64,
       });
 
       console.log("🔐 socket auth check:", {
@@ -156,12 +160,14 @@ io.on("connection", (socket) => {
 
       let conversation = await Conversation.findOne({ appointment: appointmentId });
 
+      const lastMessagePreview = trimmedText || "📷 Photo";
+
       if (!conversation) {
         conversation = await Conversation.create({
           appointment: appointment._id,
           customer: customerId,
           worker: workerId,
-          lastMessage: text.trim(),
+          lastMessage: lastMessagePreview,
           lastMessageAt: new Date(),
         });
       }
@@ -171,11 +177,12 @@ io.on("connection", (socket) => {
         appointment: appointmentId,
         sender: sender,
         receiver: receiver,
-        text: text.trim(),
+        text: trimmedText,
+        imageBase64: imageBase64 || null,
         readBy: [sender],
       });
 
-      conversation.lastMessage = text.trim();
+      conversation.lastMessage = lastMessagePreview;
       conversation.lastMessageAt = new Date();
       await conversation.save();
 
@@ -200,7 +207,7 @@ io.on("connection", (socket) => {
       console.log("🔔 receiver token:", receiverToken || "none");
 
       if (receiverToken) {
-        await sendPushNotification(receiverToken, text.trim(), senderName);
+        await sendPushNotification(receiverToken, lastMessagePreview, senderName);
       } else {
         console.log("❌ No valid receiver token found");
       }

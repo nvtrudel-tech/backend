@@ -4,6 +4,7 @@ const Worker = require("../models/Worker"); // Import Worker model
 const User = require("../models/User"); // Import User model
 const router = express.Router();
 const { Expo } = require('expo-server-sdk'); // --- IMPORT THE SDK ---
+const { sendBookingConfirmationEmails } = require("../utils/mailer");
 
 // --- Helper function to send push notifications (NEW VERSION) ---
 // Create a new Expo client
@@ -251,6 +252,15 @@ router.put("/:id", async (req, res) => {
                  console.error("Failed to send status update notification to worker:", e);
              }
          }
+    }
+
+    // Send booking confirmation emails to both parties when price is accepted
+    if (status === 'confirmed' && oldStatus === 'price_pending') {
+        try {
+            await sendBookingConfirmationEmails(appointment);
+        } catch (e) {
+            console.error("Failed to send booking confirmation emails:", e);
+        }
     }
     
     // 3. Notify WORKER (if customer cancels/reschedules a confirmed job)

@@ -5,7 +5,7 @@ import Slider from "@react-native-community/slider";
 import * as ImagePicker from "expo-image-picker";
 import * as Location from "expo-location";
 import * as Notifications from "expo-notifications";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -27,7 +27,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import ThemeToggle from "../components/ThemeToggle";
 import { useTheme } from "../context/ThemeContext";
 
-const API_URL = "https://backend-tknm.onrender.com/api";
+const API_URL = "http://172.20.10.3:6000/api";
 
 const ALL_SKILLS = [
   "Electrician",
@@ -58,8 +58,9 @@ interface PriceItem {
 }
 
 export default function WorkerDashboard() {
-  const { colors } = useTheme();
+  const { colors, theme } = useTheme();
   const router = useRouter();
+  const isDarkMode = theme === "dark";
 
   const [workerProfile, setWorkerProfile] = useState<any | null>(null);
   const [workerId, setWorkerId] = useState<string | null>(null);
@@ -75,12 +76,17 @@ export default function WorkerDashboard() {
   const [clockedIn, setClockedIn] = useState(false);
   const [unreadCounts, setUnreadCounts] = useState<{ [key: string]: number }>({});
 
+  const [timeclockStatus, setTimeclockStatus] = useState<"clocked_out" | "clocked_in" | "on_break">("clocked_out");
+  const [activeTimeclockAppointmentId, setActiveTimeclockAppointmentId] = useState<string | null>(null);
+  const [dailyHours, setDailyHours] = useState<number>(0);
+
   const [location, setLocation] = useState<Location.LocationObjectCoords | null>(null);
   const [locationError, setLocationError] = useState<string | null>(null);
   const locationSubscription = useRef<Location.LocationSubscription | null>(null);
 
   const [isSaving, setIsSaving] = useState(false);
   const [skillModalVisible, setSkillModalVisible] = useState(false);
+  const [settingsModalVisible, setSettingsModalVisible] = useState(false);
 
   const [dateTimeModalVisible, setDateTimeModalVisible] = useState(false);
   const [currentJobToSchedule, setCurrentJobToSchedule] = useState<any | null>(null);
@@ -154,6 +160,101 @@ export default function WorkerDashboard() {
     }
   };
 
+  const fetchTimeclockStatus = async (currentWorkerId: string) => {
+    try {
+      const response = await fetch(`${API_URL}/timeclock/status/${currentWorkerId}`);
+      if (!response.ok) return;
+      const data = await response.json();
+      setTimeclockStatus(data.status);
+      setActiveTimeclockAppointmentId(data.entry?.appointmentId || null);
+    } catch (error) {
+      console.error("Timeclock status fetch error:", error);
+    }
+  };
+
+  const fetchDailyHours = async (currentWorkerId: string) => {
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const response = await fetch(`${API_URL}/timeclock/daily/${currentWorkerId}?date=${today}`);
+      if (!response.ok) return;
+      const data = await response.json();
+      setDailyHours(data.totalHours || 0);
+    } catch (error) {
+      console.error("Daily hours fetch error:", error);
+    }
+  };
+
+  const handleJobClockIn = async (appointmentId: string) => {
+    if (!workerId) return;
+    try {
+      const response = await fetch(`${API_URL}/timeclock/clock-in`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workerId, appointmentId }),
+      });
+      if (!response.ok) throw new Error("Failed to clock in");
+      const data = await response.json();
+      if (data.flaggedPreviousEntry) {
+        Alert.alert(
+          "Heads up",
+          "You had an open clock-in from a previous job that wasn't closed. It's been flagged for review."
+        );
+      }
+      await fetchTimeclockStatus(workerId);
+      await fetchDailyHours(workerId);
+    } catch (error) {
+      Alert.alert("Error", "Could not clock in to this job.");
+    }
+  };
+
+  const handleBreakStart = async () => {
+    if (!workerId) return;
+    try {
+      const response = await fetch(`${API_URL}/timeclock/break-start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workerId }),
+      });
+      if (!response.ok) throw new Error("Failed to start break");
+      await fetchTimeclockStatus(workerId);
+      await fetchDailyHours(workerId);
+    } catch (error) {
+      Alert.alert("Error", "Could not start break.");
+    }
+  };
+
+  const handleBreakEnd = async () => {
+    if (!workerId) return;
+    try {
+      const response = await fetch(`${API_URL}/timeclock/break-end`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workerId }),
+      });
+      if (!response.ok) throw new Error("Failed to end break");
+      await fetchTimeclockStatus(workerId);
+      await fetchDailyHours(workerId);
+    } catch (error) {
+      Alert.alert("Error", "Could not end break.");
+    }
+  };
+
+  const handleJobClockOut = async () => {
+    if (!workerId) return;
+    try {
+      const response = await fetch(`${API_URL}/timeclock/clock-out`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workerId }),
+      });
+      if (!response.ok) throw new Error("Failed to clock out");
+      await fetchTimeclockStatus(workerId);
+      await fetchDailyHours(workerId);
+    } catch (error) {
+      Alert.alert("Error", "Could not clock out.");
+    }
+  };
+
   useEffect(() => {
     const initialize = async () => {
       const userString = await AsyncStorage.getItem("user");
@@ -196,6 +297,8 @@ export default function WorkerDashboard() {
         await fetchUnreadCounts(currentWorker._id);
         await registerForPushNotificationsAsync(currentWorker._id);
         await getInitialLocation(currentWorker._id);
+        await fetchTimeclockStatus(currentWorker._id);
+        await fetchDailyHours(currentWorker._id);
 
         if (isClockedIn) {
           await startLocationTracking(currentWorker._id);
@@ -217,14 +320,26 @@ export default function WorkerDashboard() {
 
     fetchAppointments(workerId);
     fetchUnreadCounts(workerId);
+    fetchTimeclockStatus(workerId);
+    fetchDailyHours(workerId);
 
     const interval = setInterval(() => {
       fetchAppointments(workerId);
       fetchUnreadCounts(workerId);
-    }, 5000);
+      fetchTimeclockStatus(workerId);
+      fetchDailyHours(workerId);
+    }, 20000);
 
     return () => clearInterval(interval);
   }, [workerId]);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      if (!workerId) return;
+      fetchAppointments(workerId);
+      fetchUnreadCounts(workerId);
+    }, [workerId])
+  );
 
   const getInitialLocation = async (currentWorkerId: string) => {
     const { status } = await Location.requestForegroundPermissionsAsync();
@@ -362,7 +477,7 @@ export default function WorkerDashboard() {
     if (!result.canceled && result.assets?.[0]?.base64) {
       const base64Image = `data:image/jpeg;base64,${result.assets[0].base64}`;
       setProfileImage(base64Image);
-      Alert.alert("Success", "Profile picture updated. Press 'Save Profile' to apply.");
+      Alert.alert("Success", "Profile picture updated. Press 'Save Settings' to apply.");
     }
   };
 
@@ -395,7 +510,8 @@ export default function WorkerDashboard() {
 
       if (!response.ok) throw new Error("Failed to save profile.");
 
-      Alert.alert("Success", "Your profile has been updated.");
+      Alert.alert("Success", "Your settings have been updated.");
+      setSettingsModalVisible(false);
     } catch (error: any) {
       Alert.alert("Error", error.message || "Could not save your profile.");
     } finally {
@@ -612,12 +728,15 @@ export default function WorkerDashboard() {
       });
 
       const data = await response.json().catch(() => ({}));
-      console.log("worker chat conversation response:", response.status, data);
-      console.log("openJobChat selfUserId:", workerId);
 
       if (!response.ok) {
         throw new Error(data.message || `Chat route failed with status ${response.status}`);
       }
+
+      setUnreadCounts((prev) => ({
+        ...prev,
+        [job._id]: 0,
+      }));
 
       router.push({
         pathname: "/chat/[appointmentId]",
@@ -728,6 +847,240 @@ export default function WorkerDashboard() {
     </Modal>
   );
 
+  const renderSettingsModal = () => (
+    <Modal
+      animationType="slide"
+      transparent
+      visible={settingsModalVisible}
+      onRequestClose={() => setSettingsModalVisible(false)}
+    >
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        style={styles.modalBackdrop}
+      >
+        <Pressable
+          style={styles.modalBackdrop}
+          onPress={() => setSettingsModalVisible(false)}
+        >
+          <Pressable
+            style={[
+              styles.settingsSheet,
+              { backgroundColor: colors.cardBackground },
+            ]}
+          >
+            <View style={styles.settingsHeader}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                <View
+                  style={[
+                    styles.hammerBadgeLarge,
+                    { backgroundColor: colors.primaryButton },
+                  ]}
+                >
+                  <Ionicons name="hammer-outline" size={20} color="#fff" />
+                </View>
+                <View>
+                  <Text style={[styles.settingsTitle, { color: colors.text }]}>
+                    Settings
+                  </Text>
+                  <Text style={[styles.settingsSubtitle, { color: colors.subText }]}>
+                    Profile, service, distance and shift controls
+                  </Text>
+                </View>
+              </View>
+
+              <TouchableOpacity onPress={() => setSettingsModalVisible(false)}>
+                <Ionicons name="close" size={26} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ paddingBottom: 30 }}
+            >
+              <View style={styles.settingsProfileTop}>
+                <TouchableOpacity onPress={handlePickImage}>
+                  <Image
+                    source={{ uri: profileImage || `https://i.pravatar.cc/100?u=${workerId}` }}
+                    style={styles.avatar}
+                  />
+                  <View style={styles.cameraIcon}>
+                    <Ionicons name="camera" size={20} color="white" />
+                  </View>
+                </TouchableOpacity>
+
+                <TextInput
+                  style={[
+                    styles.workerNameInput,
+                    {
+                      color: colors.text,
+                      borderBottomColor: colors.inputBorder,
+                    },
+                  ]}
+                  value={name}
+                  onChangeText={setName}
+                  placeholder="Your Name"
+                  placeholderTextColor={colors.subText}
+                />
+              </View>
+
+              <Text style={[styles.settingsSectionTitle, { color: colors.text }]}>
+                Service
+              </Text>
+              <TouchableOpacity
+                style={[
+                  styles.skillSelector,
+                  {
+                    backgroundColor: colors.background,
+                    borderColor: colors.inputBorder,
+                  },
+                ]}
+                onPress={() => setSkillModalVisible(true)}
+              >
+                <Text
+                  style={[
+                    styles.skillSelectorText,
+                    { color: selectedSkill ? colors.text : colors.subText },
+                  ]}
+                >
+                  {selectedSkill || "Select your service"}
+                </Text>
+                <Ionicons name="chevron-down" size={24} color={colors.subText} />
+              </TouchableOpacity>
+
+              <Text style={[styles.settingsSectionTitle, { color: colors.text }]}>
+                Shift
+              </Text>
+              <View
+                style={[
+                  styles.section,
+                  {
+                    backgroundColor: colors.background,
+                    borderColor: colors.inputBorder,
+                    marginTop: 0,
+                  },
+                ]}
+              >
+                <Text style={[styles.label, { color: colors.text }]}>Shift Status</Text>
+                <TouchableOpacity
+                  onPress={handleClockToggle}
+                  style={[
+                    styles.clockButton,
+                    { backgroundColor: clockedIn ? "#ef4444" : "#10b981" },
+                  ]}
+                >
+                  <Text style={styles.clockText}>
+                    {clockedIn ? "Clock Out" : "Clock In"}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              <Text style={[styles.settingsSectionTitle, { color: colors.text }]}>
+                Personal Details
+              </Text>
+              <View
+                style={[
+                  styles.detailsCard,
+                  {
+                    backgroundColor: colors.background,
+                    marginBottom: 18,
+                  },
+                ]}
+              >
+                <Text style={[styles.label, { color: colors.subText }]}>Age</Text>
+                <TextInput
+                  style={[
+                    styles.input,
+                    {
+                      backgroundColor: colors.cardBackground,
+                      color: colors.text,
+                      borderColor: colors.inputBorder,
+                    },
+                  ]}
+                  value={age}
+                  onChangeText={setAge}
+                  placeholder="e.g., 30"
+                  keyboardType="number-pad"
+                  placeholderTextColor={colors.subText}
+                />
+
+                <Text style={[styles.label, { color: colors.subText }]}>Gender</Text>
+                <View style={styles.genderContainer}>
+                  {GENDERS.map((g) => (
+                    <TouchableOpacity
+                      key={g}
+                      style={[
+                        styles.genderButton,
+                        {
+                          backgroundColor:
+                            gender === g ? colors.primaryButton : colors.cardBackground,
+                          borderColor:
+                            gender === g ? colors.primaryButton : colors.inputBorder,
+                        },
+                      ]}
+                      onPress={() => setGender(g)}
+                    >
+                      <Text
+                        style={{
+                          color: gender === g ? colors.primaryButtonText : colors.text,
+                          fontSize: 12,
+                        }}
+                      >
+                        {g}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+
+              <Text style={[styles.settingsSectionTitle, { color: colors.text }]}>
+                Travel Distance
+              </Text>
+              <View
+                style={[
+                  styles.detailsCard,
+                  { backgroundColor: colors.background, marginBottom: 18 },
+                ]}
+              >
+                <Text style={[styles.distanceLabel, { color: colors.text }]}>
+                  Up to {maxDistance.toFixed(0)} km
+                </Text>
+                <Slider
+                  style={styles.slider}
+                  minimumValue={5}
+                  maximumValue={100}
+                  step={5}
+                  value={maxDistance}
+                  onSlidingComplete={setMaxDistance}
+                  minimumTrackTintColor={colors.primaryButton}
+                  maximumTrackTintColor={colors.inputBorder}
+                  thumbTintColor={colors.primaryButton}
+                />
+              </View>
+
+              <TouchableOpacity
+                style={[
+                  styles.saveButton,
+                  {
+                    backgroundColor: colors.primaryButton,
+                    opacity: isSaving ? 0.6 : 1,
+                    marginHorizontal: 0,
+                    marginTop: 8,
+                  },
+                ]}
+                onPress={handleSaveProfile}
+                disabled={isSaving}
+              >
+                <Text style={styles.saveButtonText}>
+                  {isSaving ? "Saving..." : "Save Settings"}
+                </Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+
   const handleBreakdownChange = (
     index: number,
     field: "item" | "price",
@@ -785,7 +1138,7 @@ export default function WorkerDashboard() {
                 { backgroundColor: colors.cardBackground },
               ]}
             >
-              <ScrollView contentContainerStyle={{ width: "100%" }}>
+              <ScrollView contentContainerStyle={{ width: "100%", paddingBottom: 40 }}>
                 <Text style={[styles.modalTitle, { color: colors.text, marginBottom: 10 }]}>
                   Propose Price & Schedule
                 </Text>
@@ -910,7 +1263,15 @@ export default function WorkerDashboard() {
                 </TouchableOpacity>
 
                 {Platform.OS === "ios" && (
-                  <>
+                  <View
+                    style={[
+                      styles.iosPickerCard,
+                      {
+                        backgroundColor: colors.background,
+                        borderColor: colors.inputBorder,
+                      },
+                    ]}
+                  >
                     <DateTimePicker
                       testID="datePicker"
                       value={selectedDateTime}
@@ -918,6 +1279,8 @@ export default function WorkerDashboard() {
                       display="spinner"
                       onChange={onDateChange}
                       minimumDate={new Date()}
+                      themeVariant={isDarkMode ? "dark" : "light"}
+                      textColor={colors.text}
                       style={styles.datePicker}
                     />
                     <DateTimePicker
@@ -927,9 +1290,11 @@ export default function WorkerDashboard() {
                       is24Hour
                       display="spinner"
                       onChange={onTimeChange}
+                      themeVariant={isDarkMode ? "dark" : "light"}
+                      textColor={colors.text}
                       style={styles.datePicker}
                     />
-                  </>
+                  </View>
                 )}
               </ScrollView>
 
@@ -957,9 +1322,90 @@ export default function WorkerDashboard() {
     );
   };
 
+  const renderHeaderCard = () => (
+    <View
+      style={[
+        styles.heroCard,
+        { backgroundColor: colors.cardBackground, borderColor: colors.inputBorder },
+      ]}
+    >
+      <View style={styles.headerBar}>
+        <TouchableOpacity
+          style={[styles.hammerButton, { backgroundColor: colors.primaryButton }]}
+          onPress={() => setSettingsModalVisible(true)}
+        >
+          <Ionicons name="hammer-outline" size={22} color="#fff" />
+        </TouchableOpacity>
+
+        <View style={{ flex: 1, marginLeft: 12 }}>
+          <Text style={[styles.header, { color: colors.text }]}>My Dashboard</Text>
+          <Text style={[styles.heroSubText, { color: colors.subText }]}>
+            Manage jobs, chat and appointments
+          </Text>
+        </View>
+
+        <View style={styles.headerIcons}>
+          {workerProfile?.isEmployer && (
+            <TouchableOpacity onPress={() => router.push("/worker/timesheets")}>
+              <Ionicons name="time-outline" size={26} color={colors.text} />
+            </TouchableOpacity>
+          )}
+          <ThemeToggle />
+          <TouchableOpacity onPress={handleLogout}>
+            <Ionicons name="log-out-outline" size={28} color={colors.text} />
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      <View style={styles.quickInfoRow}>
+        <View
+          style={[
+            styles.quickInfoCard,
+            { backgroundColor: colors.background, borderColor: colors.inputBorder },
+          ]}
+        >
+          <Text style={[styles.quickInfoLabel, { color: colors.subText }]}>Service</Text>
+          <Text style={[styles.quickInfoValue, { color: colors.text }]}>
+            {selectedSkill || "Not set"}
+          </Text>
+        </View>
+
+        <View
+          style={[
+            styles.quickInfoCard,
+            { backgroundColor: colors.background, borderColor: colors.inputBorder },
+          ]}
+        >
+          <Text style={[styles.quickInfoLabel, { color: colors.subText }]}>Shift</Text>
+          <Text
+            style={[
+              styles.quickInfoValue,
+              { color: clockedIn ? "#10b981" : "#ef4444" },
+            ]}
+          >
+            {clockedIn ? "Clocked In" : "Clocked Out"}
+          </Text>
+        </View>
+
+        <View
+          style={[
+            styles.quickInfoCard,
+            { backgroundColor: colors.background, borderColor: colors.inputBorder },
+          ]}
+        >
+          <Text style={[styles.quickInfoLabel, { color: colors.subText }]}>Today's Hours</Text>
+          <Text style={[styles.quickInfoValue, { color: colors.text }]}>
+            {dailyHours.toFixed(2)}h
+          </Text>
+        </View>
+      </View>
+    </View>
+  );
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
       {renderSkillModal()}
+      {renderSettingsModal()}
       {renderDateTimeModal()}
 
       {Platform.OS === "android" && showDatePicker && (
@@ -985,158 +1431,7 @@ export default function WorkerDashboard() {
       )}
 
       <ScrollView contentContainerStyle={styles.container}>
-        <View style={styles.headerBar}>
-          <Text style={[styles.header, { color: colors.text }]}>My Dashboard</Text>
-          <View style={styles.headerIcons}>
-            <ThemeToggle />
-            <TouchableOpacity onPress={handleLogout}>
-              <Ionicons name="log-out-outline" size={28} color={colors.text} />
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        <Text style={[styles.subHeader, { color: colors.text }]}>My Service</Text>
-        <TouchableOpacity
-          style={[
-            styles.skillSelector,
-            { backgroundColor: colors.cardBackground, borderColor: colors.inputBorder },
-          ]}
-          onPress={() => setSkillModalVisible(true)}
-        >
-          <Text
-            style={[
-              styles.skillSelectorText,
-              { color: selectedSkill ? colors.text : colors.subText },
-            ]}
-          >
-            {selectedSkill || "Select your service"}
-          </Text>
-          <Ionicons name="chevron-down" size={24} color={colors.subText} />
-        </TouchableOpacity>
-
-        <View style={[styles.profileSection, { backgroundColor: colors.cardBackground }]}>
-          <TouchableOpacity onPress={handlePickImage}>
-            <Image
-              source={{ uri: profileImage || `https://i.pravatar.cc/100?u=${workerId}` }}
-              style={styles.avatar}
-            />
-            <View style={styles.cameraIcon}>
-              <Ionicons name="camera" size={20} color="white" />
-            </View>
-          </TouchableOpacity>
-
-          <TextInput
-            style={[
-              styles.workerNameInput,
-              { color: colors.text, borderBottomColor: colors.inputBorder },
-            ]}
-            value={name}
-            onChangeText={setName}
-            placeholder="Your Name"
-            placeholderTextColor={colors.subText}
-          />
-        </View>
-
-        <View
-          style={[
-            styles.section,
-            {
-              backgroundColor: colors.cardBackground,
-              borderColor: colors.inputBorder,
-            },
-          ]}
-        >
-          <Text style={[styles.label, { color: colors.text }]}>Shift Status</Text>
-          <TouchableOpacity
-            onPress={handleClockToggle}
-            style={[
-              styles.clockButton,
-              { backgroundColor: clockedIn ? "#ef4444" : "#10b981" },
-            ]}
-          >
-            <Text style={styles.clockText}>{clockedIn ? "Clock Out" : "Clock In"}</Text>
-          </TouchableOpacity>
-        </View>
-
-        <Text style={[styles.subHeader, { color: colors.text }]}>My Details</Text>
-        <View style={[styles.detailsCard, { backgroundColor: colors.cardBackground }]}>
-          <Text style={[styles.label, { color: colors.subText }]}>Age</Text>
-          <TextInput
-            style={[
-              styles.input,
-              {
-                backgroundColor: colors.background,
-                color: colors.text,
-                borderColor: colors.inputBorder,
-              },
-            ]}
-            value={age}
-            onChangeText={setAge}
-            placeholder="e.g., 30"
-            keyboardType="number-pad"
-            placeholderTextColor={colors.subText}
-          />
-
-          <Text style={[styles.label, { color: colors.subText }]}>Gender</Text>
-          <View style={styles.genderContainer}>
-            {GENDERS.map((g) => (
-              <TouchableOpacity
-                key={g}
-                style={[
-                  styles.genderButton,
-                  {
-                    backgroundColor:
-                      gender === g ? colors.primaryButton : colors.background,
-                    borderColor:
-                      gender === g ? colors.primaryButton : colors.inputBorder,
-                  },
-                ]}
-                onPress={() => setGender(g)}
-              >
-                <Text
-                  style={{
-                    color: gender === g ? colors.primaryButtonText : colors.text,
-                    fontSize: 12,
-                  }}
-                >
-                  {g}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
-
-        <Text style={[styles.subHeader, { color: colors.text }]}>Travel Distance</Text>
-        <View style={[styles.detailsCard, { backgroundColor: colors.cardBackground }]}>
-          <Text style={[styles.distanceLabel, { color: colors.text }]}>
-            Up to {maxDistance.toFixed(0)} km
-          </Text>
-          <Slider
-            style={styles.slider}
-            minimumValue={5}
-            maximumValue={100}
-            step={5}
-            value={maxDistance}
-            onSlidingComplete={setMaxDistance}
-            minimumTrackTintColor={colors.primaryButton}
-            maximumTrackTintColor={colors.inputBorder}
-            thumbTintColor={colors.primaryButton}
-          />
-        </View>
-
-        <TouchableOpacity
-          style={[
-            styles.saveButton,
-            {
-              backgroundColor: colors.primaryButton,
-              opacity: isSaving ? 0.6 : 1,
-            },
-          ]}
-          onPress={handleSaveProfile}
-          disabled={isSaving}
-        >
-          <Text style={styles.saveButtonText}>{isSaving ? "Saving..." : "Save Profile"}</Text>
-        </TouchableOpacity>
+        {renderHeaderCard()}
 
         <Text style={[styles.subHeader, { color: colors.text }]}>Current Location</Text>
         <View style={styles.mapContainer}>
@@ -1259,6 +1554,49 @@ export default function WorkerDashboard() {
                 </TouchableOpacity>
               )}
 
+              {(job.status.toLowerCase() === "confirmed" ||
+                job.status.toLowerCase() === "en_route") && (
+                <View style={styles.timeclockRow}>
+                  {activeTimeclockAppointmentId === job._id ? (
+                    <>
+                      {timeclockStatus === "clocked_in" && (
+                        <>
+                          <TouchableOpacity
+                            style={[styles.timeclockButton, { backgroundColor: "#f59e0b" }]}
+                            onPress={handleBreakStart}
+                          >
+                            <Text style={styles.timeclockButtonText}>Start Break</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={[styles.timeclockButton, { backgroundColor: "#ef4444" }]}
+                            onPress={handleJobClockOut}
+                          >
+                            <Text style={styles.timeclockButtonText}>Clock Out</Text>
+                          </TouchableOpacity>
+                        </>
+                      )}
+                      {timeclockStatus === "on_break" && (
+                        <TouchableOpacity
+                          style={[styles.timeclockButton, { backgroundColor: "#10b981" }]}
+                          onPress={handleBreakEnd}
+                        >
+                          <Text style={styles.timeclockButtonText}>End Break</Text>
+                        </TouchableOpacity>
+                      )}
+                    </>
+                  ) : (
+                    timeclockStatus === "clocked_out" && (
+                      <TouchableOpacity
+                        style={[styles.timeclockButton, { backgroundColor: "#10b981" }]}
+                        onPress={() => handleJobClockIn(job._id)}
+                      >
+                        <Text style={styles.timeclockButtonText}>Clock In to Job</Text>
+                      </TouchableOpacity>
+                    )
+                  )}
+                </View>
+              )}
+
               <View style={styles.statusActions}>
                 {job.status.toLowerCase() !== "completed" &&
                 job.status.toLowerCase() !== "cancelled" ? (
@@ -1360,15 +1698,65 @@ export default function WorkerDashboard() {
 
 const styles = StyleSheet.create({
   container: { padding: 16, paddingBottom: 40 },
+
+  heroCard: {
+    borderRadius: 18,
+    borderWidth: 1,
+    padding: 16,
+    marginTop: 8,
+    marginBottom: 12,
+  },
   headerBar: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 10,
-    marginTop: 10,
+  },
+  hammerButton: {
+    width: 46,
+    height: 46,
+    borderRadius: 14,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  hammerBadgeLarge: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    justifyContent: "center",
+    alignItems: "center",
   },
   header: { fontSize: 24, fontWeight: "bold" },
-  headerIcons: { flexDirection: "row", alignItems: "center", gap: 15 },
+  heroSubText: { fontSize: 13, marginTop: 4 },
+  headerIcons: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 15,
+    marginLeft: 12,
+  },
+
+  quickInfoRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 16,
+  },
+  quickInfoCard: {
+    flex: 1,
+    borderRadius: 14,
+    borderWidth: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+  },
+  quickInfoLabel: {
+    fontSize: 12,
+    marginBottom: 4,
+    fontWeight: "600",
+  },
+  quickInfoValue: {
+    fontSize: 15,
+    fontWeight: "700",
+  },
+
+  subHeader: { fontSize: 18, fontWeight: "600", marginTop: 24, marginBottom: 12 },
+
   skillSelector: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -1379,13 +1767,26 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   skillSelectorText: { fontSize: 16, fontWeight: "600" },
+
   profileSection: {
     alignItems: "center",
     padding: 20,
     borderRadius: 12,
     marginBottom: 20,
   },
-  avatar: { width: 100, height: 100, borderRadius: 50, borderWidth: 3, borderColor: "#fff" },
+  settingsProfileTop: {
+    alignItems: "center",
+    paddingVertical: 6,
+    marginBottom: 10,
+  },
+
+  avatar: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    borderWidth: 3,
+    borderColor: "#fff",
+  },
   cameraIcon: {
     position: "absolute",
     bottom: 0,
@@ -1403,6 +1804,7 @@ const styles = StyleSheet.create({
     paddingBottom: 5,
     width: "80%",
   },
+
   section: {
     flexDirection: "row",
     alignItems: "center",
@@ -1425,7 +1827,14 @@ const styles = StyleSheet.create({
   },
   clockButton: { paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8 },
   clockText: { color: "white", fontWeight: "bold" },
-  subHeader: { fontSize: 18, fontWeight: "600", marginTop: 24, marginBottom: 12 },
+
+  settingsSectionTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    marginBottom: 10,
+    marginTop: 6,
+  },
+
   detailsCard: { padding: 20, borderRadius: 12, marginBottom: 10 },
   input: {
     padding: 12,
@@ -1436,9 +1845,15 @@ const styles = StyleSheet.create({
     width: "100%",
   },
   genderContainer: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  genderButton: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1 },
+  genderButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
   distanceLabel: { fontSize: 16, fontWeight: "500", textAlign: "center", marginBottom: 10 },
   slider: { width: "100%", height: 40 },
+
   saveButton: {
     padding: 16,
     borderRadius: 12,
@@ -1447,10 +1862,11 @@ const styles = StyleSheet.create({
     marginHorizontal: 10,
   },
   saveButtonText: { color: "white", fontSize: 16, fontWeight: "bold" },
+
   mapContainer: {
     width: "100%",
     height: 250,
-    borderRadius: 10,
+    borderRadius: 14,
     marginBottom: 20,
     overflow: "hidden",
     backgroundColor: "#f0f0f0",
@@ -1464,6 +1880,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   loadingText: { textAlign: "center", fontStyle: "italic", paddingVertical: 30 },
+
   jobCard: {
     borderRadius: 12,
     padding: 15,
@@ -1491,8 +1908,14 @@ const styles = StyleSheet.create({
     gap: 10,
     flexWrap: "wrap",
   },
-  statusButton: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8, alignItems: "center" },
+  statusButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    alignItems: "center",
+  },
   statusButtonText: { color: "white", fontWeight: "bold" },
+
   modalBackdrop: {
     flex: 1,
     justifyContent: "center",
@@ -1506,6 +1929,28 @@ const styles = StyleSheet.create({
     padding: 20,
     overflow: "hidden",
   },
+  settingsSheet: {
+    width: "92%",
+    maxWidth: 460,
+    maxHeight: "88%",
+    borderRadius: 20,
+    padding: 18,
+  },
+  settingsHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 14,
+  },
+  settingsTitle: {
+    fontSize: 22,
+    fontWeight: "800",
+  },
+  settingsSubtitle: {
+    fontSize: 13,
+    marginTop: 2,
+  },
+
   dateTimeModalContent: {
     width: "90%",
     maxWidth: 400,
@@ -1515,6 +1960,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   datePicker: { width: "100%" },
+  iosPickerCard: {
+    width: "100%",
+    borderRadius: 12,
+    padding: 10,
+    borderWidth: 1,
+    marginTop: 10,
+  },
   datePickerButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -1544,7 +1996,12 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     alignItems: "center",
   },
-  modalTitle: { fontSize: 20, fontWeight: "bold", textAlign: "center", marginBottom: 20 },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: "bold",
+    textAlign: "center",
+    marginBottom: 20,
+  },
   modalOption: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -1656,5 +2113,21 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 11,
     fontWeight: "700",
+  },
+  timeclockRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 10,
+  },
+  timeclockButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+  },
+  timeclockButtonText: {
+    color: "#fff",
+    fontWeight: "700",
+    fontSize: 13,
   },
 });

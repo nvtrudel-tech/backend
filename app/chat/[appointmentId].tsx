@@ -5,7 +5,9 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
+  Image,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   StyleSheet,
   Text,
@@ -14,16 +16,26 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import * as ImagePicker from "expo-image-picker";
+import * as Notifications from "expo-notifications";
 import { socket } from "../lib/socket";
 
-const API_URL = "https://backend-tknm.onrender.com/api";
+const API_URL = "http://172.20.10.3:6000/api";
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+    shouldShowBanner: true,
+    shouldShowList: true,
+  }),
+});
 
 export default function AppointmentChatScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
 
   const [currentUser, setCurrentUser] = useState<any>(null);
-  const [conversation, setConversation] = useState<any>(null);
   const [messages, setMessages] = useState<any[]>([]);
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(true);
@@ -119,33 +131,73 @@ export default function AppointmentChatScreen() {
     const senderId = getSenderId(message);
     const receiverId = getReceiverId(message);
 
-    if (senderId && effectiveSelfId && senderId === effectiveSelfId) {
-      return true;
-    }
-
-    if (senderId && otherUserId && senderId === String(otherUserId)) {
-      return false;
-    }
-
-    if (receiverId && otherUserId && receiverId === String(otherUserId)) {
-      return true;
-    }
-
-    if (receiverId && effectiveSelfId && receiverId === effectiveSelfId) {
-      return false;
-    }
-
-    console.log("UNRESOLVED MESSAGE SIDE", {
-      message,
-      senderId,
-      receiverId,
-      effectiveSelfId,
-      otherUserId,
-      conversation,
-    });
+    if (senderId && effectiveSelfId && senderId === effectiveSelfId) return true;
+    if (senderId && otherUserId && senderId === String(otherUserId)) return false;
+    if (receiverId && otherUserId && receiverId === String(otherUserId)) return true;
+    if (receiverId && effectiveSelfId && receiverId === effectiveSelfId) return false;
 
     return false;
   };
+
+  const markConversationRead = async (activeUserId: string) => {
+    try {
+      await fetch(`${API_URL}/chat/read/${appointmentId}/${activeUserId}`, {
+        method: "PUT",
+      }).catch(() => {});
+    } catch (error) {
+      console.error("Mark read error:", error);
+    }
+  };
+
+  const requestNotificationPermission = async () => {
+    try {
+      if (Platform.OS === "android") {
+        await Notifications.setNotificationChannelAsync("chat-messages", {
+          name: "Chat Messages",
+          importance: Notifications.AndroidImportance.MAX,
+          sound: "default",
+          vibrationPattern: [0, 250, 250, 250],
+          lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+        });
+      }
+
+      const { status: existingStatus } = await Notifications.getPermissionsAsync();
+      let finalStatus = existingStatus;
+
+      if (existingStatus !== "granted") {
+        const { status } = await Notifications.requestPermissionsAsync();
+        finalStatus = status;
+      }
+
+      console.log("Notification permission status:", finalStatus);
+    } catch (error) {
+      console.error("Notification permission error:", error);
+    }
+  };
+
+  useEffect(() => {
+    requestNotificationPermission();
+
+    const responseSub = Notifications.addNotificationResponseReceivedListener((response) => {
+      const data = response.notification.request.content.data as any;
+
+      if (data?.appointmentId) {
+        router.push({
+          pathname: "/chat/[appointmentId]",
+          params: {
+            appointmentId: String(data.appointmentId),
+            otherUserId: String(data.otherUserId || ""),
+            otherUserName: String(data.otherUserName || "Conversation"),
+            selfUserId: String(data.selfUserId || ""),
+          },
+        });
+      }
+    });
+
+    return () => {
+      responseSub.remove();
+    };
+  }, [router]);
 
   useEffect(() => {
     let mounted = true;
@@ -171,11 +223,6 @@ export default function AppointmentChatScreen() {
           throw new Error("This chat is not available.");
         }
 
-        const convData = await convRes.json();
-        if (mounted) {
-          setConversation(convData);
-        }
-
         const msgRes = await fetch(`${API_URL}/chat/messages/${appointmentId}`);
         if (!msgRes.ok) {
           throw new Error("Failed to load messages.");
@@ -186,26 +233,14 @@ export default function AppointmentChatScreen() {
         if (!mounted) return;
         setMessages(Array.isArray(data) ? data : []);
 
-        console.log("CHAT PARAMS", {
-          appointmentId,
-          selfUserId,
-          otherUserId,
-          parsedUserId: parsedUser?._id,
-        });
-
-        console.log("CHAT CONVERSATION", convData);
-        console.log("CHAT MESSAGES RAW", data);
-
         const activeUserId = selfUserId
           ? String(selfUserId)
           : parsedUser?._id
-          ? String(parsedUser._id)
-          : "";
+            ? String(parsedUser._id)
+            : "";
 
         if (activeUserId) {
-          await fetch(`${API_URL}/chat/read/${appointmentId}/${activeUserId}`, {
-            method: "PUT",
-          }).catch(() => {});
+          await markConversationRead(activeUserId);
 
           socket.emit("join_conversation", {
             appointmentId: String(appointmentId),
@@ -221,7 +256,7 @@ export default function AppointmentChatScreen() {
 
     init();
 
-    const onReceiveMessage = (message: any) => {
+    const onReceiveMessage = async (message: any) => {
       const msgAppointmentId =
         typeof message?.appointment === "object"
           ? message?.appointment?._id
@@ -229,13 +264,17 @@ export default function AppointmentChatScreen() {
 
       if (String(msgAppointmentId) !== String(appointmentId)) return;
 
-      console.log("RECEIVED SOCKET MESSAGE", message);
-
       setMessages((prev) => {
         const exists = prev.some((m) => String(m._id) === String(message._id));
         if (exists) return prev;
         return [...prev, message];
       });
+
+      const mine = isMessageMine(message);
+
+      if (!mine && effectiveSelfId) {
+        await markConversationRead(effectiveSelfId);
+      }
 
       setTimeout(() => {
         flatListRef.current?.scrollToEnd({ animated: true });
@@ -248,22 +287,32 @@ export default function AppointmentChatScreen() {
       mounted = false;
       socket.off("receive_message", onReceiveMessage);
     };
-  }, [appointmentId, selfUserId, otherUserId]);
+  }, [appointmentId, selfUserId, effectiveSelfId]);
+
+  const [pendingImage, setPendingImage] = useState<string | null>(null);
+  const [viewingImage, setViewingImage] = useState<string | null>(null);
+
+  const handlePickImage = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      quality: 0.4,
+      base64: true,
+    });
+
+    if (!result.canceled && result.assets?.[0]?.base64) {
+      const base64Image = `data:image/jpeg;base64,${result.assets[0].base64}`;
+      setPendingImage(base64Image);
+    }
+  };
 
   const sendMessage = () => {
     const senderId = effectiveSelfId;
     const receiverId = otherUserId ? String(otherUserId) : "";
 
-    if (!text.trim() || !senderId || !receiverId || !appointmentId) {
+    if ((!text.trim() && !pendingImage) || !senderId || !receiverId || !appointmentId) {
       return;
     }
-
-    console.log("SEND MESSAGE PAYLOAD", {
-      appointmentId: String(appointmentId),
-      senderId,
-      receiverId,
-      text: text.trim(),
-    });
 
     setSending(true);
 
@@ -274,11 +323,10 @@ export default function AppointmentChatScreen() {
         senderId,
         receiverId,
         text: text.trim(),
+        imageBase64: pendingImage || undefined,
       },
       (response: any) => {
         setSending(false);
-
-        console.log("SEND MESSAGE RESPONSE", response);
 
         if (!response?.ok) {
           console.log("send_message failed:", response?.message);
@@ -286,6 +334,7 @@ export default function AppointmentChatScreen() {
         }
 
         setText("");
+        setPendingImage(null);
 
         setTimeout(() => {
           flatListRef.current?.scrollToEnd({ animated: true });
@@ -295,19 +344,7 @@ export default function AppointmentChatScreen() {
   };
 
   const renderItem = ({ item }: any) => {
-    const senderId = getSenderId(item);
-    const receiverId = getReceiverId(item);
     const mine = isMessageMine(item);
-
-    console.log("RENDER MESSAGE", {
-      text: item?.text,
-      senderId,
-      receiverId,
-      effectiveSelfId,
-      otherUserId,
-      mine,
-      raw: item,
-    });
 
     return (
       <View
@@ -322,14 +359,26 @@ export default function AppointmentChatScreen() {
             mine ? styles.myBubble : styles.otherBubble,
           ]}
         >
-          <Text
-            style={[
-              styles.messageText,
-              mine ? styles.myMessageText : styles.otherMessageText,
-            ]}
-          >
-            {item?.text || ""}
-          </Text>
+          {item?.imageBase64 && (
+            <TouchableOpacity onPress={() => setViewingImage(item.imageBase64)}>
+              <Image
+                source={{ uri: item.imageBase64 }}
+                style={styles.messageImage}
+                resizeMode="cover"
+              />
+            </TouchableOpacity>
+          )}
+
+          {!!item?.text && (
+            <Text
+              style={[
+                styles.messageText,
+                mine ? styles.myMessageText : styles.otherMessageText,
+              ]}
+            >
+              {item.text}
+            </Text>
+          )}
 
           <Text
             style={[
@@ -358,10 +407,10 @@ export default function AppointmentChatScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={styles.safe} edges={["top", "left", "right", "bottom"]}>
       <KeyboardAvoidingView
         style={styles.container}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
         keyboardVerticalOffset={Platform.OS === "ios" ? 10 : 0}
       >
         <View style={styles.header}>
@@ -382,10 +431,28 @@ export default function AppointmentChatScreen() {
           renderItem={renderItem}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
           onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
         />
 
+        {pendingImage && (
+          <View style={styles.pendingImageBar}>
+            <Image source={{ uri: pendingImage }} style={styles.pendingImageThumb} />
+            <TouchableOpacity onPress={() => setPendingImage(null)}>
+              <Ionicons name="close-circle" size={22} color="#6b7280" />
+            </TouchableOpacity>
+          </View>
+        )}
+
         <View style={styles.inputBar}>
+          <TouchableOpacity
+            style={styles.attachButton}
+            onPress={handlePickImage}
+            disabled={sending}
+          >
+            <Ionicons name="image-outline" size={24} color="#2563eb" />
+          </TouchableOpacity>
+
           <TextInput
             style={styles.input}
             placeholder="Type a message..."
@@ -397,9 +464,12 @@ export default function AppointmentChatScreen() {
           />
 
           <TouchableOpacity
-            style={[styles.sendButton, (!text.trim() || sending) && styles.sendButtonDisabled]}
+            style={[
+              styles.sendButton,
+              (!text.trim() && !pendingImage) || sending ? styles.sendButtonDisabled : null,
+            ]}
             onPress={sendMessage}
-            disabled={!text.trim() || sending}
+            disabled={(!text.trim() && !pendingImage) || sending}
           >
             {sending ? (
               <ActivityIndicator color="#fff" size="small" />
@@ -409,11 +479,77 @@ export default function AppointmentChatScreen() {
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
+
+      <Modal
+        visible={!!viewingImage}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setViewingImage(null)}
+      >
+        <TouchableOpacity
+          style={styles.imageViewerBackdrop}
+          activeOpacity={1}
+          onPress={() => setViewingImage(null)}
+        >
+          {viewingImage && (
+            <Image
+              source={{ uri: viewingImage }}
+              style={styles.imageViewerFull}
+              resizeMode="contain"
+            />
+          )}
+          <TouchableOpacity
+            style={styles.imageViewerClose}
+            onPress={() => setViewingImage(null)}
+          >
+            <Ionicons name="close" size={30} color="#fff" />
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  imageViewerBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.9)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  imageViewerFull: {
+    width: "100%",
+    height: "80%",
+  },
+  imageViewerClose: {
+    position: "absolute",
+    top: 50,
+    right: 20,
+    padding: 8,
+  },
+  messageImage: {
+    width: 200,
+    height: 200,
+    borderRadius: 10,
+    marginBottom: 6,
+  },
+  attachButton: {
+    paddingHorizontal: 8,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  pendingImageBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    gap: 10,
+  },
+  pendingImageThumb: {
+    width: 50,
+    height: 50,
+    borderRadius: 8,
+  },
   safe: {
     flex: 1,
     backgroundColor: "#efeae2",
@@ -457,7 +593,7 @@ const styles = StyleSheet.create({
   listContent: {
     paddingHorizontal: 10,
     paddingVertical: 12,
-    paddingBottom: 24,
+    paddingBottom: 12,
   },
   messageRow: {
     width: "100%",
@@ -477,7 +613,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
   },
   myBubble: {
-    backgroundColor: "#dcf8c6",
+    backgroundColor: "#2563eb",
     borderBottomRightRadius: 4,
   },
   otherBubble: {
@@ -489,7 +625,7 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   myMessageText: {
-    color: "#111827",
+    color: "#ffffff",
   },
   otherMessageText: {
     color: "#111827",
@@ -499,7 +635,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   myTimeText: {
-    color: "#6b7280",
+    color: "rgba(255,255,255,0.8)",
     textAlign: "right",
     alignSelf: "flex-end",
   },

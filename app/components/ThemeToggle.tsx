@@ -4,35 +4,30 @@ import { StyleSheet, TouchableOpacity } from "react-native";
 import { useTheme } from "../context/ThemeContext";
 
 export default function ThemeToggle() {
-  const { theme, toggleTheme, colors } = useTheme();
-  const isDark = theme === "dark";
+  const { theme, colors, toggleTheme } = useTheme();
 
   return (
     <TouchableOpacity
       onPress={toggleTheme}
-      style={[
-        styles.toggleButton,
-        {
-          backgroundColor: colors.cardBackground, // Use a consistent background from your theme
-          borderColor: colors.inputBorder,       // Add a border for better contrast
-        },
-      ]}
+      activeOpacity={0.7}
+      style={styles.button}
     >
       <Ionicons
-        name={isDark ? "sunny" : "moon"}
+        name={theme === "dark" ? "sunny" : "moon"}
         size={24}
-        color={isDark ? "#facc15" : colors.text} // Use theme's text color for the moon icon
+        color={colors.text}
       />
     </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
-  toggleButton: {
-    padding: 10,
-    borderRadius: 20,
-    borderWidth: 0, // This makes the borderColor visible
-    alignItems: "center",
+  button: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "transparent", // fully blends
   },
 });
