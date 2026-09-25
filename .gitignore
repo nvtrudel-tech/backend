@@ -37,3 +37,7 @@ yarn-error.*
 *.tsbuildinfo
 
 app-example
+connexions-a.json
+google-services.json
+.env
+backend/.env
