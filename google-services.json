@@ -1,0 +1,30 @@
+
+{
+  "project_info": {
+    "project_number": "310626312037",
+    "project_id": "connexions-e07c4",
+    "storage_bucket": "connexions-e07c4.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:310626312037:android:62fff51d58bb5cb97b4b8c",
+        "android_client_info": {
+          "package_name": "com.anonymous.ConnectionApp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDcWSdfBeJoWS9md6ycx6Sea29nmCU_7_k"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
