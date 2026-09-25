@@ -1,12 +1,10 @@
-const nodemailer = require("nodemailer");
+const { Resend } = require("resend");
 
-const transporter = nodemailer.createTransport({
-  service: "gmail",
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-});
+const resend = new Resend(process.env.RESEND_API_KEY);
+
+// While using Resend's test/free tier without a verified custom domain,
+// you must send FROM this address (or a verified domain you've set up in Resend).
+const FROM_ADDRESS = "Connexions <onboarding@resend.dev>";
 
 async function sendBookingConfirmationEmails(appointment) {
   const customerEmail = appointment.customer?.email;
@@ -37,8 +35,8 @@ async function sendBookingConfirmationEmails(appointment) {
 
   if (customerEmail) {
     sendPromises.push(
-      transporter.sendMail({
-        from: `"Connexions" <${process.env.EMAIL_USER}>`,
+      resend.emails.send({
+        from: FROM_ADDRESS,
         to: customerEmail,
         subject: `Booking Confirmed: ${service}`,
         html: `
@@ -56,8 +54,8 @@ async function sendBookingConfirmationEmails(appointment) {
 
   if (workerEmail) {
     sendPromises.push(
-      transporter.sendMail({
-        from: `"Connexions" <${process.env.EMAIL_USER}>`,
+      resend.emails.send({
+        from: FROM_ADDRESS,
         to: workerEmail,
         subject: `Job Confirmed: ${service}`,
         html: `
@@ -77,6 +75,8 @@ async function sendBookingConfirmationEmails(appointment) {
   results.forEach((result, i) => {
     if (result.status === "rejected") {
       console.error(`Booking confirmation email ${i} failed:`, result.reason);
+    } else if (result.value?.error) {
+      console.error(`Booking confirmation email ${i} returned an error:`, result.value.error);
     }
   });
 
