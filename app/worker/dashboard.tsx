@@ -174,8 +174,9 @@ export default function WorkerDashboard() {
 
   const fetchDailyHours = async (currentWorkerId: string) => {
     try {
-      const today = new Date().toISOString().slice(0, 10);
-      const response = await fetch(`${API_URL}/timeclock/daily/${currentWorkerId}?date=${today}`);
+      const today = new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD in local time, not UTC
+      const tzOffset = new Date().getTimezoneOffset();
+      const response = await fetch(`${API_URL}/timeclock/daily/${currentWorkerId}?date=${today}&tzOffset=${tzOffset}`);
       if (!response.ok) return;
       const data = await response.json();
       setDailyHours(data.totalHours || 0);

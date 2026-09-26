@@ -65,10 +65,11 @@ export default function TimesheetsScreen() {
       const start = new Date();
       start.setDate(start.getDate() - 6);
 
+      const tzOffset = new Date().getTimezoneOffset();
+      const startStr = start.toLocaleDateString("en-CA"); // YYYY-MM-DD in local time, not UTC
+      const endStr = end.toLocaleDateString("en-CA");
       const response = await fetch(
-        `${API_URL}/timeclock/range/${workerId}?start=${start
-          .toISOString()
-          .slice(0, 10)}&end=${end.toISOString().slice(0, 10)}`
+        `${API_URL}/timeclock/range/${workerId}?start=${startStr}&end=${endStr}&tzOffset=${tzOffset}`
       );
       const data = await response.json();
       setDays(data.days || []);

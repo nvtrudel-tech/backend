@@ -3,6 +3,36 @@ const router = express.Router();
 const TimeEntry = require("../models/TimeEntry");
 const Appointment = require("../models/Appointment");
 
+// ---- Timezone helpers ----
+// tzOffsetMinutes matches JS's Date.prototype.getTimezoneOffset():
+// positive when local time is BEHIND UTC (e.g. Eastern = 240/300).
+// localMs = utcMs - tzOffsetMinutes * 60000
+
+function toLocal(date, tzOffsetMinutes) {
+  return new Date(date.getTime() - tzOffsetMinutes * 60000);
+}
+
+// Returns the YYYY-MM-DD the given UTC date falls on, from the user's local perspective
+function localDayKey(date, tzOffsetMinutes) {
+  return toLocal(date, tzOffsetMinutes).toISOString().slice(0, 10);
+}
+
+// Given a YYYY-MM-DD string meant to represent the user's LOCAL calendar day,
+// returns the actual UTC Date range [start, end] that day corresponds to.
+function localDayBoundsUTC(dateStr, tzOffsetMinutes) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const localMidnightAsUTCMs = Date.UTC(y, m - 1, d, 0, 0, 0, 0);
+  const start = new Date(localMidnightAsUTCMs + tzOffsetMinutes * 60000);
+  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000 - 1);
+  return { start, end };
+}
+
+function getTzOffset(req) {
+  const raw = req.query.tzOffset;
+  const parsed = raw !== undefined ? parseInt(raw, 10) : 0;
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 // Helper: find any currently-open entry (work or break) for a worker
 async function findOpenEntry(workerId) {
   return TimeEntry.findOne({ workerId, endTime: null }).sort({ startTime: -1 });
@@ -20,8 +50,6 @@ router.post("/clock-in", async (req, res) => {
     let flaggedAnomaly = false;
 
     if (openEntry) {
-      // Worker already has an open entry (maybe forgot to clock out of a previous job).
-      // We flag it rather than silently closing it, so the employer can review.
       openEntry.flaggedAnomaly = true;
       await openEntry.save();
       flaggedAnomaly = true;
@@ -124,7 +152,7 @@ router.get("/job/:appointmentId", async (req, res) => {
     });
 
     const totalMs = entries.reduce((sum, e) => {
-      const end = e.endTime || new Date(); // still clocked in counts up to now
+      const end = e.endTime || new Date();
       return sum + (end - e.startTime);
     }, 0);
 
@@ -139,16 +167,15 @@ router.get("/job/:appointmentId", async (req, res) => {
   }
 });
 
-// GET /api/timeclock/daily/:workerId?date=YYYY-MM-DD -> total work hours that day
+// GET /api/timeclock/daily/:workerId?date=YYYY-MM-DD&tzOffset=240
+// date, if given, is the user's LOCAL calendar day (not UTC).
 router.get("/daily/:workerId", async (req, res) => {
   try {
     const { workerId } = req.params;
-    const dateParam = req.query.date ? new Date(req.query.date) : new Date();
+    const tzOffsetMinutes = getTzOffset(req);
 
-    const dayStart = new Date(dateParam);
-    dayStart.setHours(0, 0, 0, 0);
-    const dayEnd = new Date(dateParam);
-    dayEnd.setHours(23, 59, 59, 999);
+    const dateStr = req.query.date || localDayKey(new Date(), tzOffsetMinutes);
+    const { start: dayStart, end: dayEnd } = localDayBoundsUTC(dateStr, tzOffsetMinutes);
 
     const entries = await TimeEntry.find({
       workerId,
@@ -163,7 +190,7 @@ router.get("/daily/:workerId", async (req, res) => {
 
     res.json({
       workerId,
-      date: dayStart.toISOString().slice(0, 10),
+      date: dateStr,
       totalHours: +(totalMs / 1000 / 60 / 60).toFixed(2),
       entries,
     });
@@ -190,19 +217,61 @@ router.get("/status/:workerId", async (req, res) => {
   }
 });
 
-// GET /api/timeclock/range/:workerId?start=YYYY-MM-DD&end=YYYY-MM-DD
-// Returns hours grouped by day, with each day broken down by job.
+// GET /api/timeclock/summary/:workerId?tzOffset=240
+// Combined status + today's hours (in the user's LOCAL day), one call.
+router.get("/summary/:workerId", async (req, res) => {
+  try {
+    const { workerId } = req.params;
+    const tzOffsetMinutes = getTzOffset(req);
+
+    const openEntry = await TimeEntry.findOne({ workerId, endTime: null }).sort({
+      startTime: -1,
+    });
+
+    const todayStr = localDayKey(new Date(), tzOffsetMinutes);
+    const { start: dayStart, end: dayEnd } = localDayBoundsUTC(todayStr, tzOffsetMinutes);
+
+    const todaysEntries = await TimeEntry.find({
+      workerId,
+      type: "work",
+      startTime: { $gte: dayStart, $lte: dayEnd },
+    });
+
+    const totalMs = todaysEntries.reduce((sum, e) => {
+      const end = e.endTime || new Date();
+      return sum + (end - e.startTime);
+    }, 0);
+
+    res.json({
+      status: openEntry ? (openEntry.type === "work" ? "clocked_in" : "on_break") : "clocked_out",
+      activeAppointmentId: openEntry ? openEntry.appointmentId : null,
+      dailyHours: +(totalMs / 1000 / 60 / 60).toFixed(2),
+    });
+  } catch (err) {
+    console.error("Timeclock summary error:", err);
+    res.status(500).json({ msg: "Server error fetching timeclock summary" });
+  }
+});
+
+// GET /api/timeclock/range/:workerId?start=YYYY-MM-DD&end=YYYY-MM-DD&tzOffset=240
+// start/end are the user's LOCAL calendar days. Days/hours are grouped by
+// the user's local day, not the server's UTC day.
 router.get("/range/:workerId", async (req, res) => {
   try {
     const { workerId } = req.params;
+    const tzOffsetMinutes = getTzOffset(req);
 
-    const start = req.query.start
-      ? new Date(req.query.start)
-      : new Date(new Date().setDate(new Date().getDate() - 6));
-    start.setHours(0, 0, 0, 0);
+    const startStr =
+      req.query.start ||
+      (() => {
+        const d = new Date();
+        d.setDate(d.getDate() - 6);
+        return localDayKey(d, tzOffsetMinutes);
+      })();
+    const endStr = req.query.end || localDayKey(new Date(), tzOffsetMinutes);
 
-    const end = req.query.end ? new Date(req.query.end) : new Date();
-    end.setHours(23, 59, 59, 999);
+    const { start } = localDayBoundsUTC(startStr, tzOffsetMinutes);
+    const { end } = localDayBoundsUTC(endStr, tzOffsetMinutes);
 
     const entries = await TimeEntry.find({
       workerId,
@@ -215,7 +284,7 @@ router.get("/range/:workerId", async (req, res) => {
     const dayMap = {};
 
     for (const e of entries) {
-      const day = e.startTime.toISOString().slice(0, 10);
+      const day = localDayKey(e.startTime, tzOffsetMinutes);
       if (!dayMap[day]) {
         dayMap[day] = { date: day, totalHours: 0, jobs: {} };
       }
@@ -258,49 +327,13 @@ router.get("/range/:workerId", async (req, res) => {
 
     res.json({
       workerId,
-      start: start.toISOString().slice(0, 10),
-      end: end.toISOString().slice(0, 10),
+      start: startStr,
+      end: endStr,
       days,
     });
   } catch (err) {
     console.error("Range hours error:", err);
     res.status(500).json({ msg: "Server error fetching range hours" });
-  }
-});
-
-// GET /api/timeclock/summary/:workerId -> combined status + today's hours in one call
-router.get("/summary/:workerId", async (req, res) => {
-  try {
-    const { workerId } = req.params;
-
-    const openEntry = await TimeEntry.findOne({ workerId, endTime: null }).sort({
-      startTime: -1,
-    });
-
-    const dayStart = new Date();
-    dayStart.setHours(0, 0, 0, 0);
-    const dayEnd = new Date();
-    dayEnd.setHours(23, 59, 59, 999);
-
-    const todaysEntries = await TimeEntry.find({
-      workerId,
-      type: "work",
-      startTime: { $gte: dayStart, $lte: dayEnd },
-    });
-
-    const totalMs = todaysEntries.reduce((sum, e) => {
-      const end = e.endTime || new Date();
-      return sum + (end - e.startTime);
-    }, 0);
-
-    res.json({
-      status: openEntry ? (openEntry.type === "work" ? "clocked_in" : "on_break") : "clocked_out",
-      activeAppointmentId: openEntry ? openEntry.appointmentId : null,
-      dailyHours: +(totalMs / 1000 / 60 / 60).toFixed(2),
-    });
-  } catch (err) {
-    console.error("Timeclock summary error:", err);
-    res.status(500).json({ msg: "Server error fetching timeclock summary" });
   }
 });
 
