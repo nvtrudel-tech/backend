@@ -38,7 +38,7 @@ app.use("/api/chat", chatRoutes);
 app.use("/api/timeclock", require("./routes/timeclock"));
 
 // Push notification helper
-async function sendPushNotification(token, message, senderName = "New Message") {
+async function sendPushNotification(token, message, senderName = "New Message", badge) {
   if (!token) {
     console.log("❌ No push token provided");
     return;
@@ -50,10 +50,16 @@ async function sendPushNotification(token, message, senderName = "New Message") 
       sound: "default",
       title: senderName,
       body: message,
+      priority: "high",
+      channelId: "default",
       data: {
         type: "chat",
       },
     };
+
+    if (typeof badge === "number") {
+      payload.badge = badge;
+    }
 
     console.log("📨 Push payload:", payload);
 
@@ -207,7 +213,11 @@ io.on("connection", (socket) => {
       console.log("🔔 receiver token:", receiverToken || "none");
 
       if (receiverToken) {
-        await sendPushNotification(receiverToken, lastMessagePreview, senderName);
+        const unreadBadgeCount = await Message.countDocuments({
+          receiver,
+          readBy: { $ne: receiver },
+        });
+        await sendPushNotification(receiverToken, lastMessagePreview, senderName, unreadBadgeCount);
       } else {
         console.log("❌ No valid receiver token found");
       }

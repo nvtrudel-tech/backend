@@ -332,6 +332,12 @@ export default function ElectricianAppView() {
       if (!response.ok) return;
       const data = await response.json();
       setUnreadCounts(data || {});
+
+      const total = Object.values(data || {}).reduce(
+        (sum: number, n: any) => sum + (Number(n) || 0),
+        0
+      );
+      Notifications.setBadgeCountAsync(total).catch(() => {});
     } catch (error) {
       console.error("Unread count fetch error:", error);
     }
