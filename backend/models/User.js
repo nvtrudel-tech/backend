@@ -16,6 +16,8 @@ const userSchema = new mongoose.Schema(
     profileImageBase64: { type: String, default: null },
     // Field for push notifications
     expoPushToken: { type: String },
+    // Counts appointment-related pushes sent while the app wasn't open/viewed
+    unreadNotifications: { type: Number, default: 0 },
   },
   { timestamps: true }
 );

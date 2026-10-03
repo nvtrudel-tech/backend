@@ -70,6 +70,9 @@ const workerSchema = new mongoose.Schema(
       type: String,
       default: null, // (safer default)
     },
+
+    // Counts appointment-related pushes sent while the app wasn't open/viewed
+    unreadNotifications: { type: Number, default: 0 },
   },
   { timestamps: true }
 );

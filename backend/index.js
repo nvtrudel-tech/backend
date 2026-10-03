@@ -36,6 +36,7 @@ app.use("/api/appointments", appointmentRoutes);
 app.use("/api/workers", workerRoutes);
 app.use("/api/chat", chatRoutes);
 app.use("/api/timeclock", require("./routes/timeclock"));
+app.use("/api/notifications", require("./routes/notifications"));
 
 // Push notification helper
 async function sendPushNotification(token, message, senderName = "New Message", badge) {

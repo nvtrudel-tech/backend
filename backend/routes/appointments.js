@@ -10,7 +10,7 @@ const { sendBookingConfirmationEmails } = require("../utils/mailer");
 // Create a new Expo client
 const expo = new Expo();
 
-const sendPushNotification = async (expoPushToken, title, body) => {
+const sendPushNotification = async (expoPushToken, title, body, badge) => {
   // Use the SDK's built-in validator
   if (!Expo.isExpoPushToken(expoPushToken)) {
     return console.log(`Invalid push token: ${expoPushToken}. Cannot send notification.`);
@@ -26,6 +26,10 @@ const sendPushNotification = async (expoPushToken, title, body) => {
     data: { screen: 'home' }, 
   };
 
+  if (typeof badge === 'number') {
+    message.badge = badge;
+  }
+
   try {
     // Send the notification using the SDK
     // sendPushNotificationsAsync expects an array of messages
@@ -37,6 +41,20 @@ const sendPushNotification = async (expoPushToken, title, body) => {
     console.error("Error sending push notification with SDK:", error);
   }
 };
+
+async function bumpNotificationBadge(Model, id) {
+  try {
+    const updated = await Model.findByIdAndUpdate(
+      id,
+      { $inc: { unreadNotifications: 1 } },
+      { new: true }
+    );
+    return updated?.unreadNotifications || 1;
+  } catch (e) {
+    console.error("Failed to bump notification badge:", e);
+    return undefined;
+  }
+}
 // ---
 
 // ✅ Get all appointments
@@ -85,10 +103,12 @@ Address: ${address}
 Job Description: ${description}`;
 
         // This call will now use the new SDK function
+        const workerBookingBadge = await bumpNotificationBadge(Worker, bookedWorker._id);
         await sendPushNotification(
           bookedWorker.expoPushToken,
           `NEW BOOKING: ${service} Job (Pending Price)`, 
-          notificationBody 
+          notificationBody,
+          workerBookingBadge
         );
       } else {
         console.log(`Worker ${bookedWorker?.name || worker} does not have a push token saved. (Appointment: ${appointment._id})`);
@@ -206,10 +226,12 @@ router.put("/:id", async (req, res) => {
         }
         
         if (notificationTitle) {
+           const customerBadge = await bumpNotificationBadge(User, appointment.customer._id);
            await sendPushNotification(
               appointment.customer.expoPushToken,
               notificationTitle,
-              notificationBody
+              notificationBody,
+              customerBadge
            );
         }
       } else {
@@ -245,10 +267,12 @@ router.put("/:id", async (req, res) => {
          
          if (workerNotificationTitle) {
              try {
+                  const workerBadge = await bumpNotificationBadge(Worker, appointment.worker._id);
                   await sendPushNotification(
                       appointment.worker.expoPushToken,
                       workerNotificationTitle,
-                      workerNotificationBody
+                      workerNotificationBody,
+                      workerBadge
                   );
              } catch (e) {
                  console.error("Failed to send status update notification to worker:", e);
@@ -287,10 +311,12 @@ router.put("/:id", async (req, res) => {
          
          if (workerNotificationTitle) {
              try {
+                  const workerBadge = await bumpNotificationBadge(Worker, appointment.worker._id);
                   await sendPushNotification(
                       appointment.worker.expoPushToken,
                       workerNotificationTitle,
-                      workerNotificationBody
+                      workerNotificationBody,
+                      workerBadge
                   );
              } catch (e) {
                  console.error("Failed to send status update notification to worker:", e);

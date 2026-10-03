@@ -333,11 +333,27 @@ export default function ElectricianAppView() {
       const data = await response.json();
       setUnreadCounts(data || {});
 
-      const total = Object.values(data || {}).reduce(
+      const chatTotal = Object.values(data || {}).reduce(
         (sum: number, n: any) => sum + (Number(n) || 0),
         0
       );
-      Notifications.setBadgeCountAsync(total).catch(() => {});
+
+      let notifTotal = 0;
+      try {
+        const notifRes = await fetch(`${API_URL}/notifications/unread/${currentUserId}`);
+        if (notifRes.ok) {
+          const notifData = await notifRes.json();
+          notifTotal = notifData.count || 0;
+        }
+      } catch (e) {
+        console.error("Notification badge fetch error:", e);
+      }
+
+      Notifications.setBadgeCountAsync(chatTotal + notifTotal).catch(() => {});
+
+      if (notifTotal > 0) {
+        fetch(`${API_URL}/notifications/clear/${currentUserId}`, { method: "POST" }).catch(() => {});
+      }
     } catch (error) {
       console.error("Unread count fetch error:", error);
     }
