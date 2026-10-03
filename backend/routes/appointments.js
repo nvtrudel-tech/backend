@@ -21,6 +21,8 @@ const sendPushNotification = async (expoPushToken, title, body) => {
     sound: 'default',
     title: title,
     body: body,
+    priority: 'high',
+    channelId: 'default',
     data: { screen: 'home' }, 
   };
 
