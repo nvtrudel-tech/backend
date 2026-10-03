@@ -758,6 +758,14 @@ export default function WorkerDashboard() {
       return;
     }
 
+    if (status === "completed") {
+      if (timeclockStatus !== "clocked_out" && activeTimeclockAppointmentId === appointmentId) {
+        await handleJobClockOut();
+      }
+      performStatusUpdate(appointmentId, status);
+      return;
+    }
+
     performStatusUpdate(appointmentId, status);
   };
 
