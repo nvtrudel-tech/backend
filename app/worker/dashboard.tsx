@@ -78,6 +78,7 @@ export default function WorkerDashboard() {
 
   const [timeclockStatus, setTimeclockStatus] = useState<"clocked_out" | "clocked_in" | "on_break">("clocked_out");
   const [activeTimeclockAppointmentId, setActiveTimeclockAppointmentId] = useState<string | null>(null);
+  const [activeTimeclockStartTime, setActiveTimeclockStartTime] = useState<string | null>(null);
   const [dailyHours, setDailyHours] = useState<number>(0);
 
   const [location, setLocation] = useState<Location.LocationObjectCoords | null>(null);
@@ -189,8 +190,33 @@ export default function WorkerDashboard() {
       const data = await response.json();
       setTimeclockStatus(data.status);
       setActiveTimeclockAppointmentId(data.entry?.appointmentId || null);
+      setActiveTimeclockStartTime(data.entry?.startTime || null);
     } catch (error) {
       console.error("Timeclock status fetch error:", error);
+    }
+  };
+
+  const STALE_SESSION_HOURS = 8;
+
+  const openSessionHours = (() => {
+    if (!activeTimeclockStartTime) return 0;
+    const ms = Date.now() - new Date(activeTimeclockStartTime).getTime();
+    return ms / (1000 * 60 * 60);
+  })();
+
+  const handleForceClockOut = async () => {
+    if (!workerId) return;
+    try {
+      const response = await fetch(`${API_URL}/timeclock/clock-out`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workerId }),
+      });
+      if (!response.ok) throw new Error("Failed to clock out");
+      await fetchTimeclockStatus(workerId);
+      Alert.alert("Clocked Out", "Your open session has been closed.");
+    } catch (error) {
+      Alert.alert("Error", "Could not clock out.");
     }
   };
 
@@ -1485,6 +1511,24 @@ export default function WorkerDashboard() {
           )}
         </View>
 
+        {timeclockStatus !== "clocked_out" && openSessionHours > STALE_SESSION_HOURS && (
+          <View style={styles.staleSessionBanner}>
+            <Ionicons name="warning-outline" size={20} color="#92400e" />
+            <View style={{ flex: 1, marginLeft: 10 }}>
+              <Text style={styles.staleSessionText}>
+                You've been {timeclockStatus === "on_break" ? "on break" : "clocked in"} for{" "}
+                {openSessionHours.toFixed(1)}h. Did you forget to clock out?
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={styles.staleSessionButton}
+              onPress={handleForceClockOut}
+            >
+              <Text style={styles.staleSessionButtonText}>Clock Out Now</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         <Text style={[styles.subHeader, { color: colors.text }]}>My Jobs</Text>
 
         {appointments.length > 0 ? (
@@ -1720,6 +1764,33 @@ export default function WorkerDashboard() {
 }
 
 const styles = StyleSheet.create({
+  staleSessionBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#fef3c7",
+    borderColor: "#f59e0b",
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 16,
+  },
+  staleSessionText: {
+    color: "#92400e",
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  staleSessionButton: {
+    backgroundColor: "#f59e0b",
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    marginLeft: 8,
+  },
+  staleSessionButtonText: {
+    color: "#fff",
+    fontWeight: "700",
+    fontSize: 12,
+  },
   container: { padding: 16, paddingBottom: 40 },
 
   heroCard: {
