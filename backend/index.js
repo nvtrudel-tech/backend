@@ -16,6 +16,7 @@ const Message = require("./models/Message");
 const Appointment = require("./models/Appointment");
 const User = require("./models/User");
 const Worker = require("./models/Worker");
+const { getBadgeTotal } = require("./utils/badge");
 
 const app = express();
 const server = http.createServer(app);
@@ -214,10 +215,7 @@ io.on("connection", (socket) => {
       console.log("🔔 receiver token:", receiverToken || "none");
 
       if (receiverToken) {
-        const unreadBadgeCount = await Message.countDocuments({
-          receiver,
-          readBy: { $ne: receiver },
-        });
+        const unreadBadgeCount = await getBadgeTotal(receiver);
         await sendPushNotification(receiverToken, lastMessagePreview, senderName, unreadBadgeCount);
       } else {
         console.log("❌ No valid receiver token found");

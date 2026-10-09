@@ -5,6 +5,7 @@ const User = require("../models/User"); // Import User model
 const router = express.Router();
 const { Expo } = require('expo-server-sdk'); // --- IMPORT THE SDK ---
 const { sendBookingConfirmationEmails } = require("../utils/mailer");
+const { getBadgeTotal } = require("../utils/badge");
 
 // --- Helper function to send push notifications (NEW VERSION) ---
 // Create a new Expo client
@@ -44,12 +45,8 @@ const sendPushNotification = async (expoPushToken, title, body, badge) => {
 
 async function bumpNotificationBadge(Model, id) {
   try {
-    const updated = await Model.findByIdAndUpdate(
-      id,
-      { $inc: { unreadNotifications: 1 } },
-      { new: true }
-    );
-    return updated?.unreadNotifications || 1;
+    await Model.findByIdAndUpdate(id, { $inc: { unreadNotifications: 1 } });
+    return await getBadgeTotal(id);
   } catch (e) {
     console.error("Failed to bump notification badge:", e);
     return undefined;
