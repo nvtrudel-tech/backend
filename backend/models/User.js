@@ -1,3 +1,4 @@
+
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 
@@ -7,15 +8,23 @@ const userSchema = new mongoose.Schema(
     email: { type: String, required: true, unique: true },
     password: { type: String, required: true },
     phone: { type: String, default: "" },
+
     role: {
       type: String,
       enum: ["customer", "worker", "specialist"],
       default: "customer",
     },
-    // Field for profile picture
+
+    // Employer dashboard permission.
+    // Must be granted manually in MongoDB Atlas.
+    isEmployer: { type: Boolean, default: false },
+
+    // Profile picture
     profileImageBase64: { type: String, default: null },
-    // Field for push notifications
+
+    // Push notifications
     expoPushToken: { type: String },
+
     // Counts appointment-related pushes sent while the app wasn't open/viewed
     unreadNotifications: { type: Number, default: 0 },
   },
@@ -27,6 +36,7 @@ userSchema.pre("save", async function (next) {
   if (!this.isModified("password")) {
     return next();
   }
+
   const salt = await bcrypt.genSalt(10);
   this.password = await bcrypt.hash(this.password, salt);
   next();

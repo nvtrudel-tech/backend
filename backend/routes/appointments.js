@@ -6,6 +6,10 @@ const router = express.Router();
 const { Expo } = require('expo-server-sdk'); // --- IMPORT THE SDK ---
 const { sendBookingConfirmationEmails } = require("../utils/mailer");
 const { getBadgeTotal } = require("../utils/badge");
+const {
+  requireAuth,
+  requireEmployer,
+} = require("../middleware/auth");
 
 // --- Helper function to send push notifications (NEW VERSION) ---
 // Create a new Expo client
@@ -52,6 +56,124 @@ async function bumpNotificationBadge(Model, id) {
     return undefined;
   }
 }
+
+
+//
+// EMPLOYER DASHBOARD: LIST JOBS
+// GET /api/appointments/admin
+// Optional query: ?archived=true&status=completed&service=Electrician
+//
+router.get("/admin", requireAuth, requireEmployer, async (req, res) => {
+  try {
+    const filter = {
+      isArchived: req.query.archived === "true",
+    };
+
+    if (req.query.status) {
+      filter.status = req.query.status;
+    }
+
+    if (req.query.service) {
+      filter.service = req.query.service;
+    }
+
+    const appointments = await Appointment.find(filter)
+      .populate("customer", "name email phone")
+      .populate("worker", "name email phone skills")
+      .sort({ createdAt: -1 })
+      .limit(500);
+
+    return res.json(appointments);
+  } catch (err) {
+    console.error("Employer appointments error:", err);
+    return res.status(500).json({
+      msg: "Error fetching employer appointments",
+    });
+  }
+});
+
+//
+// EMPLOYER DASHBOARD: ARCHIVE A JOB
+// PATCH /api/appointments/:id/archive
+//
+router.patch(
+  "/:id/archive",
+  requireAuth,
+  requireEmployer,
+  async (req, res) => {
+    try {
+      const appointment = await Appointment.findByIdAndUpdate(
+        req.params.id,
+        {
+          $set: {
+            isArchived: true,
+            archivedAt: new Date(),
+          },
+        },
+        { new: true, runValidators: true }
+      );
+
+      if (!appointment) {
+        return res.status(404).json({
+          msg: "Appointment not found",
+        });
+      }
+
+      return res.json({
+        success: true,
+        msg: "Appointment archived",
+        appointment,
+      });
+    } catch (err) {
+      console.error("Archive appointment error:", err);
+      return res.status(500).json({
+        msg: "Error archiving appointment",
+      });
+    }
+  }
+);
+
+//
+// EMPLOYER DASHBOARD: RESTORE A JOB
+// PATCH /api/appointments/:id/restore
+//
+router.patch(
+  "/:id/restore",
+  requireAuth,
+  requireEmployer,
+  async (req, res) => {
+    try {
+      const appointment = await Appointment.findByIdAndUpdate(
+        req.params.id,
+        {
+          $set: {
+            isArchived: false,
+            archivedAt: null,
+          },
+        },
+        { new: true, runValidators: true }
+      );
+
+      if (!appointment) {
+        return res.status(404).json({
+          msg: "Appointment not found",
+        });
+      }
+
+      return res.json({
+        success: true,
+        msg: "Appointment restored",
+        appointment,
+      });
+    } catch (err) {
+      console.error("Restore appointment error:", err);
+      return res.status(500).json({
+        msg: "Error restoring appointment",
+      });
+    }
+  }
+);
+
 // ---
 
 // ✅ Get all appointments
@@ -329,16 +451,35 @@ router.put("/:id", async (req, res) => {
   }
 });
 
-// ✅ Delete appointment
-router.delete("/:id", async (req, res) => {
+// Delete appointment — only the customer who owns it can delete it.
+router.delete("/:id", requireAuth, async (req, res) => {
   try {
-    const appointment = await Appointment.findByIdAndDelete(req.params.id);
+    const appointment = await Appointment.findById(req.params.id);
+
     if (!appointment) {
-      return res.status(404).json({ msg: "Appointment not found" });
+      return res.status(404).json({
+        msg: "Appointment not found",
+      });
     }
-    res.json({ msg: "Deleted" });
+
+    // Verify that the logged-in user owns this appointment.
+    if (appointment.customer.toString() !== req.user._id.toString()) {
+      return res.status(403).json({
+        msg: "You are not authorized to cancel this appointment.",
+      });
+    }
+
+    await appointment.deleteOne();
+
+    return res.json({
+      msg: "Deleted",
+    });
   } catch (err) {
-    res.status(500).json({ msg: "Error deleting appointment", error: err.message });
+    console.error("Delete appointment error:", err);
+
+    return res.status(500).json({
+      msg: "Error deleting appointment",
+    });
   }
 });
 
