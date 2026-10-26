@@ -26,6 +26,13 @@ async function requireAuth(req, res, next) {
     const user = await User.findById(userId).select(
       "_id name email role isEmployer"
     );
+    
+    console.log("[AUTH DEBUG]", {
+      tokenUserId: userId,
+      foundUser: !!user,
+      isEmployer: user?.isEmployer,
+      role: user?.role,
+    });
 
     if (!user) {
       return res.status(401).json({
