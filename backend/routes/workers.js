@@ -1,273 +1,720 @@
+
 const express = require("express");
-const Worker = require("../models/Worker"); // Adjust path as needed
+const mongoose = require("mongoose");
+const Worker = require("../models/Worker");
+const { requireAuth } = require("../middleware/auth");
+
 const router = express.Router();
 
-// --- NEW ROUTE: FIND NEARBY CLOCKED-IN WORKERS ---
-// This is the route your customer app will call
-router.get("/nearby", async (req, res) => {
-  const { latitude, longitude, radius = 5000 } = req.query; // Default 5km radius
-
-  if (!latitude || !longitude) {
-    return res.status(400).json({ msg: "Latitude and longitude are required." });
-  }
-
-  const userLng = parseFloat(longitude);
-  const userLat = parseFloat(latitude);
-  const maxDistance = parseInt(radius);
-
+// --------------------------------------------------
+// AUTHORIZATION: verify the logged-in user owns
+// the worker profile being changed.
+// --------------------------------------------------
+async function requireOwnWorker(req, res, next) {
   try {
-    const nearbyWorkers = await Worker.find({
-      // 1. Query for location
+    const workerId = req.params.id || req.body.workerId;
+
+    if (!workerId) {
+      return res.status(400).json({ msg: "Worker ID is required." });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(workerId)) {
+      return res.status(400).json({ msg: "Invalid worker ID." });
+    }
+
+    const worker = await Worker.findById(workerId);
+
+    if (!worker) {
+      return res.status(404).json({ msg: "Worker not found." });
+    }
+
+    if (
+      !worker.authId ||
+      worker.authId.toString() !== req.user._id.toString()
+    ) {
+      return res.status(403).json({
+        msg: "You are not authorized to access this worker profile.",
+      });
+    }
+
+    req.worker = worker;
+    return next();
+  } catch (err) {
+    console.error("Worker ownership check error:", err);
+    return res.status(500).json({
+      msg: "Unable to verify worker ownership.",
+    });
+  }
+}
+
+// --------------------------------------------------
+// GET /workers/nearby
+// Public: customers can find available specialists.
+// Query parameters: longitude, latitude, maxDistance
+// maxDistance is in metres.
+// --------------------------------------------------
+router.get("/nearby", async (req, res) => {
+  try {
+    const longitude = Number(req.query.longitude);
+    const latitude = Number(req.query.latitude);
+    const rawMaxDistance = req.query.maxDistance;
+
+    const maxDistance =
+      rawMaxDistance === undefined ? 10000 : Number(rawMaxDistance);
+
+    if (
+      req.query.longitude === undefined ||
+      req.query.latitude === undefined ||
+      !Number.isFinite(longitude) ||
+      !Number.isFinite(latitude) ||
+      longitude < -180 ||
+      longitude > 180 ||
+      latitude < -90 ||
+      latitude > 90 ||
+      !Number.isFinite(maxDistance) ||
+      maxDistance <= 0 ||
+      maxDistance > 100000
+    ) {
+      return res.status(400).json({
+        msg: "Valid coordinates and maximum distance are required.",
+      });
+    }
+
+    const workers = await Worker.find({
+      "currentClock.clockedIn": true,
       currentLocation: {
         $near: {
           $geometry: {
             type: "Point",
-            coordinates: [userLng, userLat], // [lng, lat]
+            coordinates: [longitude, latitude],
           },
-          $maxDistance: maxDistance, // Max distance in meters
+          $maxDistance: maxDistance,
         },
       },
-      // 2. Filter for workers who are "clocked in"
-      "currentClock.clockedIn": true,
-    });
+    }).select("-expoPushToken -authId -email");
 
-    res.status(200).json(nearbyWorkers);
-
+    return res.status(200).json(workers);
   } catch (err) {
     console.error("Find nearby workers error:", err);
-    res.status(500).json({ success: false, msg: err.message });
+    return res.status(500).json({
+      msg: "Unable to find nearby workers.",
+    });
   }
 });
-// --- END NEW ROUTE ---
 
-
-// --- CREATE A NEW WORKER PROFILE ---
-// This is called from Signup.js when role is 'specialist'
-router.post("/", async (req, res) => {
-  const { name, email, phone, authId } = req.body;
-
+// --------------------------------------------------
+// POST /workers
+// Create a worker profile for a logged-in specialist.
+// --------------------------------------------------
+router.post("/", requireAuth, async (req, res) => {
   try {
-    // Check if a worker with this email or authId already exists
-    const existingEmail = await Worker.findOne({ email });
-    if (existingEmail) {
-      return res.status(400).json({ msg: "A worker profile with this email already exists." });
+    if (!["specialist", "worker"].includes(req.user.role)) {
+      return res.status(403).json({
+        msg: "A specialist account is required.",
+      });
     }
-    
-    // Note: authId isn't set as unique in the schema, which is probably correct
-    // in case one auth account could link to multiple profiles (though unlikely in this setup).
-    // We'll proceed assuming one-to-one.
+
+    const authId = req.user._id;
+    const name = String(req.user.name || "").trim();
+    const email = String(req.user.email || "").trim().toLowerCase();
+    const phone = req.body.phone;
+
+    if (!name) {
+      return res.status(400).json({
+        msg: "The account must have a name.",
+      });
+    }
+
+    if (!email) {
+      return res.status(400).json({
+        msg: "The account must have an email address.",
+      });
+    }
+
+    if (phone !== undefined && typeof phone !== "string") {
+      return res.status(400).json({
+        msg: "Phone must be a string.",
+      });
+    }
+
+    const existing = await Worker.findOne({
+      $or: [{ email }, { authId }],
+    });
+
+    if (existing) {
+      return res.status(409).json({
+        msg: "A worker profile already exists for this account or email.",
+      });
+    }
 
     const newWorker = new Worker({
       name,
       email,
-      phone,
-      authId, // Link to the User account
-      // Set any other default values from your schema here
-      availability: { // Example default availability
-        monday: { start: '09:00', end: '17:00', available: true },
-        tuesday: { start: '09:00', end: '17:00', available: true },
-        wednesday: { start: '09:00', end: '17:00', available: true },
-        thursday: { start: '09:00', end: '17:00', available: true },
-        friday: { start: '09:00', end: '17:00', available: true },
-        saturday: { start: '', end: '', available: false },
-        sunday: { start: '', end: '', available: false },
+      phone: phone ? phone.trim() : "",
+      authId,
+      availability: {
+        monday: {
+          start: "09:00",
+          end: "17:00",
+          available: true,
+        },
+        tuesday: {
+          start: "09:00",
+          end: "17:00",
+          available: true,
+        },
+        wednesday: {
+          start: "09:00",
+          end: "17:00",
+          available: true,
+        },
+        thursday: {
+          start: "09:00",
+          end: "17:00",
+          available: true,
+        },
+        friday: {
+          start: "09:00",
+          end: "17:00",
+          available: true,
+        },
+        saturday: {
+          start: "",
+          end: "",
+          available: false,
+        },
+        sunday: {
+          start: "",
+          end: "",
+          available: false,
+        },
       },
       currentLocation: {
-        type: 'Point',
-        coordinates: [0, 0] // Default location
-      }
+        type: "Point",
+        coordinates: [0, 0],
+      },
     });
 
     await newWorker.save();
-    
-    // Send back the created worker (without sensitive data if any)
-    res.status(201).json(newWorker);
 
+    // Do not return account IDs or push tokens.
+    const safeWorker = await Worker.findById(newWorker._id).select(
+      "-expoPushToken -authId -email"
+    );
+
+    return res.status(201).json(safeWorker);
   } catch (err) {
     console.error("Create worker error:", err);
-    res.status(500).json({ success: false, msg: err.message });
-  }
-});
-// --- END NEW ROUTE ---
 
-
-// --- SAVE WORKER PUSH TOKEN ---
-// This matches the call from your 'worker.js' (worker app)
-router.post("/save-push-token", async (req, res) => {
-  const { workerId, token } = req.body;
-
-  if (!workerId) {
-    return res.status(400).json({ msg: "Worker ID is required" });
-  }
-
-  try {
-    // Find the worker and update their token
-    // Send null to clear the token (on logout)
-    const updatedWorker = await Worker.findByIdAndUpdate(
-      workerId,
-      { expoPushToken: token || null },
-      { new: true }
-    );
-
-    if (!updatedWorker) {
-      return res.status(404).json({ msg: "Worker not found" });
+    if (err.code === 11000) {
+      return res.status(409).json({
+        msg: "A worker profile already exists for this account or email.",
+      });
     }
 
-    console.log(`Updated push token for WORKER ${workerId}`); // Server log
-    res.status(200).json({ success: true, msg: "Token saved" });
-  } catch (err) {
-    console.error("Save worker token error:", err);
-    res.status(500).json({ success: false, msg: err.message });
+    return res.status(500).json({
+      success: false,
+      msg: "Unable to create worker profile.",
+    });
   }
 });
 
-// --- GET ALL WORKERS ---
-// (Your worker app fetches this on init)
-// This route will now return the 'currentLocation' for all workers
+// --------------------------------------------------
+// POST /workers/save-push-token
+// Save a push notification token for the owner's profile.
+// Expected body: { workerId, token }
+// --------------------------------------------------
+router.post(
+  "/save-push-token",
+  requireAuth,
+  requireOwnWorker,
+  async (req, res) => {
+    try {
+      const token = req.body.token;
+
+      if (
+        token !== null &&
+        token !== undefined &&
+        typeof token !== "string"
+      ) {
+        return res.status(400).json({
+          msg: "The push token must be a string or null.",
+        });
+      }
+
+      req.worker.expoPushToken =
+        typeof token === "string" && token.trim() ? token.trim() : null;
+
+      await req.worker.save();
+
+      return res.status(200).json({
+        success: true,
+        msg: "Token saved.",
+      });
+    } catch (err) {
+      console.error("Save worker token error:", err);
+
+      return res.status(500).json({
+        success: false,
+        msg: "Unable to save worker token.",
+      });
+    }
+  }
+);
+
+// --------------------------------------------------
+// GET /workers/employer-roster?service=Electrician
+// Employer-only roster: company employees plus independent specialists.
+// --------------------------------------------------
+router.get("/employer-roster", requireAuth, async (req, res, next) => {
+  try {
+    const User = require("../models/User");
+    const user = await User.findById(req.user._id).select("isEmployer");
+    if (!user || user.isEmployer !== true) {
+      return res.status(403).json({ msg: "Employer access required." });
+    }
+    const filter = { $or: [{ employerId: req.user._id }, { employerId: null }, { employerId: { $exists: false } }] };
+    const workers = await Worker.find(filter).select("name email phone skills employerId currentClock.clockedIn").sort({ name: 1 }).lean();
+    const service = String(req.query.service || "").trim().toLowerCase();
+    const roster = workers.filter((worker) => {
+      if (!service) return true;
+      return (worker.skills || []).some((skill) => String(skill).trim().toLowerCase() === service);
+    }).map((worker) => ({
+      _id: worker._id, name: worker.name, email: worker.email, phone: worker.phone, skills: worker.skills || [],
+      isEmployee: !!worker.employerId && String(worker.employerId) === String(req.user._id),
+      specialistType: worker.employerId && String(worker.employerId) === String(req.user._id) ? "employee" : "independent",
+      clockedIn: !!worker.currentClock?.clockedIn,
+    }));
+    return res.json(roster);
+  } catch (err) {
+    console.error("Employer roster error:", err);
+    return res.status(500).json({ msg: "Unable to retrieve employer roster." });
+  }
+});
+
+// --------------------------------------------------
+// GET /workers
+// Return worker profiles for the existing app screens.
+// Never expose push tokens, account IDs or email addresses.
+// --------------------------------------------------
 router.get("/", async (req, res) => {
   try {
-    const workers = await Worker.find({});
-    // The 'currentLocation' field will be included for each worker
-    res.status(200).json(workers);
+    const workers = await Worker.find({}).select(
+      "-expoPushToken -authId -email"
+    );
+
+    return res.status(200).json(workers);
   } catch (err) {
     console.error("Get workers error:", err);
-    res.status(500).json({ success: false, msg: err.message });
+
+    return res.status(500).json({
+      msg: "Unable to retrieve workers.",
+    });
   }
 });
 
-// --- UPDATE WORKER PROFILE (MODIFIED) ---
-// (Called from 'handleSaveProfile' in worker.js)
-router.put("/:id", async (req, res) => {
+// --------------------------------------------------
+// PUT /workers/:id
+// Update allowed profile fields for the profile owner.
+// Protected fields cannot be changed through this endpoint.
+// --------------------------------------------------
+router.put("/:id", requireAuth, requireOwnWorker, async (req, res) => {
   try {
-    const workerId = req.params.id;
-    const updateData = req.body;
+    const {
+      name,
+      phone,
+      age,
+      gender,
+      skills,
+      maxDistance,
+      availability,
+      profileImageBase64,
+      profileImageUrl,
+      currentLocation,
+    } = req.body;
 
-    // --- NEW: Check for and reformat location data ---
-    // The client sends { currentLocation: { latitude: X, longitude: Y } }
-    // We must convert it to GeoJSON for the '2dsphere' index
-    if (updateData.currentLocation && 
-        updateData.currentLocation.latitude != null && 
-        updateData.currentLocation.longitude != null) {
-          
-      updateData.currentLocation = {
-        type: 'Point',
-        coordinates: [
-          updateData.currentLocation.longitude, // Lng first
-          updateData.currentLocation.latitude  // Lat second
-        ]
-      };
-      console.log(`Reformatted location for WORKER ${workerId}`);
+    const updateData = {};
+
+    if (name !== undefined) {
+      if (typeof name !== "string" || !name.trim()) {
+        return res.status(400).json({
+          msg: "Name must be a non-empty string.",
+        });
+      }
+
+      updateData.name = name.trim();
     }
-    // --- End location formatting ---
 
-    // This route will now accept 'profileImageBase64'
-    // and the correctly formatted 'currentLocation'
+    if (phone !== undefined) {
+      if (typeof phone !== "string") {
+        return res.status(400).json({
+          msg: "Phone must be a string.",
+        });
+      }
+
+      updateData.phone = phone.trim();
+    }
+
+    if (age !== undefined) {
+      const parsedAge = Number(age);
+
+      if (
+        !Number.isInteger(parsedAge) ||
+        parsedAge < 13 ||
+        parsedAge > 120
+      ) {
+        return res.status(400).json({
+          msg: "Age must be a valid number.",
+        });
+      }
+
+      updateData.age = parsedAge;
+    }
+
+    if (gender !== undefined) {
+      const allowedGenders = [
+        "Male",
+        "Female",
+        "Other",
+        "Prefer not to say",
+      ];
+
+      if (!allowedGenders.includes(gender)) {
+        return res.status(400).json({
+          msg: "Invalid gender value.",
+        });
+      }
+
+      updateData.gender = gender;
+    }
+
+    if (skills !== undefined) {
+      if (
+        !Array.isArray(skills) ||
+        !skills.every(
+          (skill) => typeof skill === "string" && skill.trim()
+        )
+      ) {
+        return res.status(400).json({
+          msg: "Skills must be an array of non-empty strings.",
+        });
+      }
+
+      updateData.skills = skills.map((skill) => skill.trim());
+    }
+
+    if (maxDistance !== undefined) {
+      const parsedDistance = Number(maxDistance);
+
+      if (
+        !Number.isFinite(parsedDistance) ||
+        parsedDistance <= 0 ||
+        parsedDistance > 500
+      ) {
+        return res.status(400).json({
+          msg: "Maximum distance must be between 1 and 500 km.",
+        });
+      }
+
+      updateData.maxDistance = parsedDistance;
+    }
+
+    if (availability !== undefined) {
+      if (
+        !availability ||
+        typeof availability !== "object" ||
+        Array.isArray(availability)
+      ) {
+        return res.status(400).json({
+          msg: "Availability must be an object.",
+        });
+      }
+
+      updateData.availability = availability;
+    }
+
+    if (profileImageBase64 !== undefined) {
+      if (
+        profileImageBase64 !== null &&
+        typeof profileImageBase64 !== "string"
+      ) {
+        return res.status(400).json({
+          msg: "Profile image must be a string or null.",
+        });
+      }
+
+      updateData.profileImageBase64 = profileImageBase64;
+    }
+
+    if (profileImageUrl !== undefined) {
+      if (typeof profileImageUrl !== "string") {
+        return res.status(400).json({
+          msg: "Profile image URL must be a string.",
+        });
+      }
+
+      updateData.profileImageUrl = profileImageUrl.trim();
+    }
+
+    if (currentLocation !== undefined) {
+      if (
+        !currentLocation ||
+        typeof currentLocation !== "object" ||
+        Array.isArray(currentLocation) ||
+        currentLocation.latitude === undefined ||
+        currentLocation.longitude === undefined
+      ) {
+        return res.status(400).json({
+          msg: "A location with latitude and longitude is required.",
+        });
+      }
+
+      const latitude = Number(currentLocation.latitude);
+      const longitude = Number(currentLocation.longitude);
+
+      if (
+        !Number.isFinite(latitude) ||
+        !Number.isFinite(longitude) ||
+        latitude < -90 ||
+        latitude > 90 ||
+        longitude < -180 ||
+        longitude > 180
+      ) {
+        return res.status(400).json({
+          msg: "Invalid latitude or longitude.",
+        });
+      }
+
+      updateData.currentLocation = {
+        type: "Point",
+        coordinates: [longitude, latitude],
+      };
+    }
+
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json({
+        msg: "No valid profile fields were provided.",
+      });
+    }
+
     const updatedWorker = await Worker.findByIdAndUpdate(
-      workerId,
+      req.worker._id,
       { $set: updateData },
-      { new: true }
-    );
+      {
+        new: true,
+        runValidators: true,
+      }
+    ).select("-expoPushToken -authId -email");
 
     if (!updatedWorker) {
-      return res.status(444).json({ msg: "Worker not found" });
+      return res.status(404).json({
+        msg: "Worker not found.",
+      });
     }
-    console.log(`Updated profile for WORKER ${workerId}`);
-    res.status(200).json(updatedWorker);
+
+    return res.status(200).json(updatedWorker);
   } catch (err) {
     console.error("Update worker profile error:", err);
-    res.status(500).json({ success: false, msg: err.message });
+
+    return res.status(500).json({
+      msg: "Unable to update worker profile.",
+    });
   }
 });
 
-// --- UPDATE WORKER LOCATION ---
-// This route also works if you want to update *only* the location
-router.post("/:id/update-location", async (req, res) => {
-  const { id } = req.params;
-  const { latitude, longitude } = req.body;
+// --------------------------------------------------
+// POST /workers/:id/update-location
+// Update the owner's location.
+// Expected body: { latitude, longitude }
+// --------------------------------------------------
+router.post(
+  "/:id/update-location",
+  requireAuth,
+  requireOwnWorker,
+  async (req, res) => {
+    try {
+      const latitude = Number(req.body.latitude);
+      const longitude = Number(req.body.longitude);
 
-  if (latitude == null || longitude == null) {
-    return res.status(400).json({ msg: "Latitude and longitude are required" });
-  }
+      if (
+        req.body.latitude === undefined ||
+        req.body.longitude === undefined ||
+        !Number.isFinite(latitude) ||
+        !Number.isFinite(longitude) ||
+        latitude < -90 ||
+        latitude > 90 ||
+        longitude < -180 ||
+        longitude > 180
+      ) {
+        return res.status(400).json({
+          msg: "Valid latitude and longitude are required.",
+        });
+      }
 
-  try {
-    // Format the update for GeoJSON
-    const locationUpdate = {
-      currentLocation: {
-        type: "Point",
-        coordinates: [longitude, latitude], // IMPORTANT: [longitude, latitude]
-      },
-    };
+      const updatedWorker = await Worker.findByIdAndUpdate(
+        req.worker._id,
+        {
+          $set: {
+            currentLocation: {
+              type: "Point",
+              coordinates: [longitude, latitude],
+            },
+          },
+        },
+        {
+          new: true,
+          runValidators: true,
+        }
+      ).select("-expoPushToken -authId -email");
 
-    const updatedWorker = await Worker.findByIdAndUpdate(
-      id,
-      { $set: locationUpdate },
-      { new: true }
-    );
+      if (!updatedWorker) {
+        return res.status(404).json({
+          success: false,
+          msg: "Worker not found.",
+        });
+      }
 
-    if (!updatedWorker) {
-      return res.status(404).json({ msg: "Worker not found" });
+      return res.status(200).json({
+        success: true,
+        worker: updatedWorker,
+      });
+    } catch (err) {
+      console.error("Update worker location error:", err);
+
+      return res.status(500).json({
+        success: false,
+        msg: "Unable to update worker location.",
+      });
     }
-
-    console.log(`Updated location for WORKER ${id}`);
-    res.status(200).json(updatedWorker);
-  } catch (err) {
-    console.error("Update location error:", err);
-    res.status(500).json({ success: false, msg: err.message });
   }
-});
+);
 
-// --- CLOCK IN ---
-// (Called from 'handleClockToggle' in worker.js)
-router.post("/:id/clock-in", async (req, res) => {
-  try {
-    const workerId = req.params.id;
-    const update = {
-      "currentClock.clockedIn": true,
-      "currentClock.clockInTime": new Date(),
-    };
-    const worker = await Worker.findByIdAndUpdate(workerId, update, { new: true });
-    if (!worker) return res.status(404).json({ msg: "Worker not found" });
+// --------------------------------------------------
+// POST /workers/:id/clock-in
+// Only the owner can clock in.
+// --------------------------------------------------
+router.post(
+  "/:id/clock-in",
+  requireAuth,
+  requireOwnWorker,
+  async (req, res) => {
+    try {
+      if (req.worker.currentClock?.clockedIn === true) {
+        return res.status(400).json({
+          msg: "You are already clocked in.",
+        });
+      }
 
-    console.log(`WORKER ${workerId} clocked IN`);
-    res.status(200).json(worker);
-  } catch (err) {
-    console.error("Clock-in error:", err);
-    res.status(500).json({ success: false, msg: err.message });
-  }
-});
+      const now = new Date();
 
-// --- CLOCK OUT ---
-// (Called from 'handleClockToggle' in worker.js)
-router.post("/:id/clock-out", async (req, res) => {
-  try {
-    const workerId = req.params.id;
+      const updatedWorker = await Worker.findByIdAndUpdate(
+        req.worker._id,
+        {
+          $set: {
+            "currentClock.clockedIn": true,
+            "currentClock.clockInTime": now,
+          },
+        },
+        {
+          new: true,
+          runValidators: true,
+        }
+      ).select("-expoPushToken -authId -email");
 
-    // Find the worker to calculate hours
-    const worker = await Worker.findById(workerId);
-    if (!worker || !worker.currentClock.clockInTime) {
-      return res.status(400).json({ msg: "Worker not clocked in or not found." });
+      if (!updatedWorker) {
+        return res.status(404).json({
+          msg: "Worker not found.",
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        msg: "Clocked in successfully.",
+        worker: updatedWorker,
+      });
+    } catch (err) {
+      console.error("Worker clock-in error:", err);
+
+      return res.status(500).json({
+        success: false,
+        msg: "Unable to clock in.",
+      });
     }
-
-    const clockInTime = new Date(worker.currentClock.clockInTime);
-    const clockOutTime = new Date();
-    
-    // You can add logic here to calculate totalHoursToday if needed
-    
-    const update = {
-      "currentClock.clockedIn": false,
-      "currentClock.clockOutTime": clockOutTime,
-    };
-
-    const updatedWorker = await Worker.findByIdAndUpdate(workerId, update, { new: true });
-
-    console.log(`WORKER ${workerId} clocked OUT`);
-    res.status(200).json(updatedWorker);
-  } catch (err) {
-    console.error("Clock-out error:", err);
-    res.status(500).json({ success: false, msg: err.message });
   }
-});
+);
 
+// --------------------------------------------------
+// POST /workers/:id/clock-out
+// Only the owner can clock out.
+// --------------------------------------------------
+router.post(
+  "/:id/clock-out",
+  requireAuth,
+  requireOwnWorker,
+  async (req, res) => {
+    try {
+      if (req.worker.currentClock?.clockedIn !== true) {
+        return res.status(400).json({
+          msg: "You are not currently clocked in.",
+        });
+      }
+
+      const clockInTime = req.worker.currentClock.clockInTime;
+      const now = new Date();
+
+      if (
+        !clockInTime ||
+        !Number.isFinite(new Date(clockInTime).getTime()) ||
+        new Date(clockInTime).getTime() > now.getTime()
+      ) {
+        return res.status(400).json({
+          msg: "Cannot clock out because the clock-in time is missing or invalid. Please contact support.",
+        });
+      }
+
+      const elapsedHours =
+        (now.getTime() - new Date(clockInTime).getTime()) /
+        (1000 * 60 * 60);
+
+      const previousHours =
+        Number(req.worker.currentClock.totalHoursToday) || 0;
+
+      const updatedWorker = await Worker.findByIdAndUpdate(
+        req.worker._id,
+        {
+          $set: {
+            "currentClock.clockedIn": false,
+            "currentClock.clockOutTime": now,
+            "currentClock.totalHoursToday": previousHours + elapsedHours,
+          },
+        },
+        {
+          new: true,
+          runValidators: true,
+        }
+      ).select("-expoPushToken -authId -email");
+
+      if (!updatedWorker) {
+        return res.status(404).json({
+          success: false,
+          msg: "Worker not found.",
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        msg: "Clocked out successfully.",
+        worker: updatedWorker,
+      });
+    } catch (err) {
+      console.error("Worker clock-out error:", err);
+
+      return res.status(500).json({
+        success: false,
+        msg: "Unable to clock out.",
+      });
+    }
+  }
+);
 
 module.exports = router;
-
