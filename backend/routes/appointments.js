@@ -79,7 +79,7 @@ router.get("/admin", requireAuth, requireEmployer, async (req, res) => {
 
     const appointments = await Appointment.find(filter)
       .populate("customer", "name email phone")
-      .populate("worker", "name email phone skills")
+      .populate("worker", "name email phone skills employerId")
       .sort({ createdAt: -1 })
       .limit(500);
 
@@ -89,6 +89,81 @@ router.get("/admin", requireAuth, requireEmployer, async (req, res) => {
     return res.status(500).json({
       msg: "Error fetching employer appointments",
     });
+  }
+});
+
+//
+// EMPLOYER DISPATCH: assign/reassign a job to a company employee or an independent specialist.
+// PATCH /api/appointments/:id/assign  { "workerId": "..." }
+router.patch("/:id/assign", requireAuth, requireEmployer, async (req, res) => {
+  try {
+    const { workerId } = req.body || {};
+    const mongoose = require("mongoose");
+    if (!mongoose.Types.ObjectId.isValid(req.params.id) || !mongoose.Types.ObjectId.isValid(workerId || "")) {
+      return res.status(400).json({ msg: "Valid appointment ID and workerId are required." });
+    }
+
+    console.log("[ASSIGN DEBUG] Appointment ID:", req.params.id);
+    console.log("[ASSIGN DEBUG] Requested worker ID:", workerId);
+    console.log("[ASSIGN DEBUG] Employer user ID:", req.user._id);  
+
+
+    const appointment = await Appointment.findById(req.params.id);
+    if (!appointment) return res.status(404).json({ msg: "Appointment not found." });
+
+    console.log("[ASSIGN DEBUG] Appointment found:", !!appointment);
+
+    if (["completed", "cancelled"].includes(String(appointment.status || "").toLowerCase())) {
+      return res.status(409).json({ msg: "Completed or cancelled jobs cannot be assigned." });
+    }
+    const worker = await Worker.findById(workerId).select("name email skills employerId expoPushToken");
+    if (!worker) return res.status(404).json({ msg: "Specialist not found." });
+
+    console.log("[ASSIGN DEBUG] Worker found:", !!worker);
+
+    const service = String(appointment.service || "").trim().toLowerCase();
+    const skills = (worker.skills || []).map((skill) => String(skill).trim().toLowerCase());
+    if (skills.length && !skills.includes(service)) {
+      return res.status(400).json({ msg: "This specialist does not list the job's service as a skill." });
+    }
+
+    const assignmentType = worker.employerId && worker.employerId.toString() === req.user._id.toString() ? "employee" : "independent";
+    if (worker.employerId && assignmentType !== "employee") {
+      return res.status(403).json({ msg: "This specialist belongs to another employer." });
+    }
+
+    const now = new Date();
+    if (appointment.worker) {
+      appointment.dispatch = appointment.dispatch || {};
+      appointment.dispatch.history = appointment.dispatch.history || [];
+      appointment.dispatch.history.push({
+        worker: appointment.worker, assignedBy: req.user._id, assignedAt: now,
+        assignmentType: appointment.dispatch.assignmentType || "independent",
+      });
+    }
+    appointment.worker = worker._id;
+    appointment.dispatch = appointment.dispatch || {};
+    appointment.dispatch.assignedBy = req.user._id;
+    appointment.dispatch.assignedAt = now;
+    appointment.dispatch.assignmentType = assignmentType;
+    await appointment.save();
+
+    try {
+      if (worker.expoPushToken) {
+        const badge = await bumpNotificationBadge(Worker, worker._id);
+        await sendPushNotification(worker.expoPushToken, "Job assigned to you", `${appointment.service || "A job"} has been assigned to you. Open Connexions to review the details.`, badge);
+      }
+    } catch (notificationError) {
+      console.error("Dispatch notification failed:", notificationError);
+    }
+
+    const populated = await Appointment.findById(appointment._id)
+      .populate("customer", "name email phone")
+      .populate("worker", "name email phone skills employerId");
+    return res.json({ success: true, msg: "Job assigned successfully.", appointment: populated });
+  } catch (err) {
+    console.error("Assign appointment error:", err);
+    return res.status(500).json({ msg: "Unable to assign this job." });
   }
 });
 
