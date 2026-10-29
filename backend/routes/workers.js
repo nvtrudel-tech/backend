@@ -197,7 +197,6 @@ router.post("/", requireAuth, async (req, res) => {
 
     await newWorker.save();
 
-    // Do not return account IDs or push tokens.
     const safeWorker = await Worker.findById(newWorker._id).select(
       "-expoPushToken -authId -email"
     );
@@ -263,38 +262,101 @@ router.post(
 );
 
 // --------------------------------------------------
+// GET /workers/me
+// Return the logged-in specialist's own worker profile.
+// Uses the authenticated account's ID, not email.
+// Requires Worker.authId to match User._id.
+// --------------------------------------------------
+router.get("/me", requireAuth, async (req, res) => {
+  try {
+    const worker = await Worker.findOne({
+      authId: req.user._id,
+    }).select("-expoPushToken");
+
+    if (!worker) {
+      return res.status(404).json({
+        msg: "No worker profile is linked to this account.",
+      });
+    }
+
+    return res.status(200).json(worker);
+  } catch (err) {
+    console.error("Get current worker profile error:", err);
+
+    return res.status(500).json({
+      msg: "Unable to retrieve your worker profile.",
+    });
+  }
+});
+
+// --------------------------------------------------
 // GET /workers/employer-roster?service=Electrician
 // Employer-only roster: company employees plus independent specialists.
 // --------------------------------------------------
-router.get("/employer-roster", requireAuth, async (req, res, next) => {
+router.get("/employer-roster", requireAuth, async (req, res) => {
   try {
     const User = require("../models/User");
     const user = await User.findById(req.user._id).select("isEmployer");
+
     if (!user || user.isEmployer !== true) {
-      return res.status(403).json({ msg: "Employer access required." });
+      return res.status(403).json({
+        msg: "Employer access required.",
+      });
     }
-    const filter = { $or: [{ employerId: req.user._id }, { employerId: null }, { employerId: { $exists: false } }] };
-    const workers = await Worker.find(filter).select("name email phone skills employerId currentClock.clockedIn").sort({ name: 1 }).lean();
+
+    const filter = {
+      $or: [
+        { employerId: req.user._id },
+        { employerId: null },
+        { employerId: { $exists: false } },
+      ],
+    };
+
+    const workers = await Worker.find(filter)
+      .select("name email phone skills employerId currentClock.clockedIn")
+      .sort({ name: 1 })
+      .lean();
+
     const service = String(req.query.service || "").trim().toLowerCase();
-    const roster = workers.filter((worker) => {
-      if (!service) return true;
-      return (worker.skills || []).some((skill) => String(skill).trim().toLowerCase() === service);
-    }).map((worker) => ({
-      _id: worker._id, name: worker.name, email: worker.email, phone: worker.phone, skills: worker.skills || [],
-      isEmployee: !!worker.employerId && String(worker.employerId) === String(req.user._id),
-      specialistType: worker.employerId && String(worker.employerId) === String(req.user._id) ? "employee" : "independent",
-      clockedIn: !!worker.currentClock?.clockedIn,
-    }));
+
+    const roster = workers
+      .filter((worker) => {
+        if (!service) return true;
+
+        return (worker.skills || []).some(
+          (skill) => String(skill).trim().toLowerCase() === service
+        );
+      })
+      .map((worker) => {
+        const isEmployee =
+          !!worker.employerId &&
+          String(worker.employerId) === String(req.user._id);
+
+        return {
+          _id: worker._id,
+          name: worker.name,
+          email: worker.email,
+          phone: worker.phone,
+          skills: worker.skills || [],
+          isEmployee,
+          specialistType: isEmployee ? "employee" : "independent",
+          clockedIn: !!worker.currentClock?.clockedIn,
+        };
+      });
+
     return res.json(roster);
   } catch (err) {
     console.error("Employer roster error:", err);
-    return res.status(500).json({ msg: "Unable to retrieve employer roster." });
+
+    return res.status(500).json({
+      msg: "Unable to retrieve employer roster.",
+    });
   }
 });
 
 // --------------------------------------------------
 // GET /workers
-// Return worker profiles for the existing app screens.
+// Return worker profiles for existing app screens.
 // Never expose push tokens, account IDs or email addresses.
 // --------------------------------------------------
 router.get("/", async (req, res) => {

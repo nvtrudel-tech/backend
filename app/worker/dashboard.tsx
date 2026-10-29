@@ -15,9 +15,7 @@ import {
   Modal,
   Platform,
   Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
+  ScrollView, StyleSheet, Text,
   TextInput,
   TouchableOpacity,
   View
@@ -28,6 +26,22 @@ import ThemeToggle from "../components/ThemeToggle";
 import { useTheme } from "../context/ThemeContext";
 
 const API_URL = "https://backend-tknm.onrender.com/api";
+
+
+async function getAuthHeaders(includeJson = true) {
+  const token = await AsyncStorage.getItem("token");
+
+  if (!token?.trim()) {
+    throw new Error("AUTH_TOKEN_MISSING");
+  }
+
+  return {
+    ...(includeJson ? { "Content-Type": "application/json" } : {}),
+    Authorization: `Bearer ${token}`,
+  };
+}
+
+
 
 const ALL_SKILLS = [
   "Electrician",
@@ -99,61 +113,81 @@ export default function WorkerDashboard() {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
 
+
   const fetchAppointments = async (currentWorkerId: string) => {
     try {
-      const appointmentsResponse = await fetch(`${API_URL}/appointments`);
+      const appointmentsResponse = await fetch(`${API_URL}/appointments`, {
+        headers: await getAuthHeaders(false),
+      });
+  
       if (!appointmentsResponse.ok) {
         throw new Error("Failed to fetch appointments");
       }
-
+  
       const allAppointments = await appointmentsResponse.json();
-
+  
       const workerAppointments = allAppointments.filter(
         (app: any) =>
-          app.worker?._id === currentWorkerId || app.worker === currentWorkerId
+          app.worker?._id === currentWorkerId ||
+          app.worker === currentWorkerId
       );
-
+  
       const now = new Date();
-
+  
       const getSortCategory = (date: string) => {
         const jobDate = new Date(date);
+  
         const todayStart = new Date(
           now.getFullYear(),
           now.getMonth(),
           now.getDate()
         ).getTime();
+  
         const jobDayStart = new Date(
           jobDate.getFullYear(),
           jobDate.getMonth(),
           jobDate.getDate()
         ).getTime();
-
+  
         if (jobDayStart === todayStart) return 0;
         if (jobDayStart > todayStart) return 1;
         return 2;
       };
-
+  
       workerAppointments.sort((a: any, b: any) => {
         const catA = getSortCategory(a.date);
         const catB = getSortCategory(b.date);
         const dateA = new Date(a.date).getTime();
         const dateB = new Date(b.date).getTime();
-
+  
         if (catA !== catB) return catA - catB;
+  
+        // Today's and future jobs: earliest first.
         if (catA === 0 || catA === 1) return dateA - dateB;
+  
+        // Past jobs: most recent first.
         return dateB - dateA;
       });
-
+  
       setAppointments(workerAppointments);
     } catch (error) {
       console.error("Failed to fetch appointments:", error);
     }
   };
+  
 
+ 
   const fetchUnreadCounts = async (currentWorkerId: string) => {
     try {
-      const response = await fetch(`${API_URL}/chat/unread/${currentWorkerId}`);
+      const response = await fetch(
+        `${API_URL}/chat/unread/${currentWorkerId}`,
+        {
+          headers: await getAuthHeaders(false),
+        }
+      );
+
       if (!response.ok) return;
+
       const data = await response.json();
       setUnreadCounts(data || {});
 
@@ -163,8 +197,15 @@ export default function WorkerDashboard() {
       );
 
       let notifTotal = 0;
+
       try {
-        const notifRes = await fetch(`${API_URL}/notifications/unread/${currentWorkerId}`);
+        const notifRes = await fetch(
+          `${API_URL}/notifications/unread/${currentWorkerId}`,
+          {
+            headers: await getAuthHeaders(false),
+          }
+        );
+
         if (notifRes.ok) {
           const notifData = await notifRes.json();
           notifTotal = notifData.count || 0;
@@ -173,10 +214,18 @@ export default function WorkerDashboard() {
         console.error("Notification badge fetch error:", e);
       }
 
-      Notifications.setBadgeCountAsync(chatTotal + notifTotal).catch(() => {});
+      Notifications.setBadgeCountAsync(
+        chatTotal + notifTotal
+      ).catch(() => {});
 
       if (notifTotal > 0) {
-        fetch(`${API_URL}/notifications/clear/${currentWorkerId}`, { method: "POST" }).catch(() => {});
+        fetch(
+          `${API_URL}/notifications/clear/${currentWorkerId}`,
+          {
+            method: "POST",
+            headers: await getAuthHeaders(false),
+          }
+        ).catch(() => {});
       }
     } catch (error) {
       console.error("Unread count fetch error:", error);
@@ -185,12 +234,23 @@ export default function WorkerDashboard() {
 
   const fetchTimeclockStatus = async (currentWorkerId: string) => {
     try {
-      const response = await fetch(`${API_URL}/timeclock/status/${currentWorkerId}`);
+      const response = await fetch(
+        `${API_URL}/timeclock/status/${currentWorkerId}`,
+        {
+          headers: await getAuthHeaders(false),
+        }
+      );
+
       if (!response.ok) return;
+
       const data = await response.json();
       setTimeclockStatus(data.status);
-      setActiveTimeclockAppointmentId(data.entry?.appointmentId || null);
-      setActiveTimeclockStartTime(data.entry?.startTime || null);
+      setActiveTimeclockAppointmentId(
+        data.entry?.appointmentId || null
+      );
+      setActiveTimeclockStartTime(
+        data.entry?.startTime || null
+      );
     } catch (error) {
       console.error("Timeclock status fetch error:", error);
     }
@@ -204,105 +264,144 @@ export default function WorkerDashboard() {
     return ms / (1000 * 60 * 60);
   })();
 
-  const handleForceClockOut = async () => {
-    if (!workerId) return;
-    try {
-      const response = await fetch(`${API_URL}/timeclock/clock-out`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workerId }),
-      });
-      if (!response.ok) throw new Error("Failed to clock out");
-      await fetchTimeclockStatus(workerId);
-      Alert.alert("Clocked Out", "Your open session has been closed.");
-    } catch (error) {
-      Alert.alert("Error", "Could not clock out.");
-    }
-  };
+ 
+const handleForceClockOut = async () => {
+  if (!workerId) return;
 
-  const fetchDailyHours = async (currentWorkerId: string) => {
-    try {
-      const today = new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD in local time, not UTC
-      const tzOffset = new Date().getTimezoneOffset();
-      const response = await fetch(`${API_URL}/timeclock/daily/${currentWorkerId}?date=${today}&tzOffset=${tzOffset}`);
-      if (!response.ok) return;
-      const data = await response.json();
-      setDailyHours(data.totalHours || 0);
-    } catch (error) {
-      console.error("Daily hours fetch error:", error);
-    }
-  };
+  try {
+    const response = await fetch(`${API_URL}/timeclock/clock-out`, {
+      method: "POST",
+      headers: await getAuthHeaders(),
+      body: JSON.stringify({ workerId }),
+    });
 
-  const handleJobClockIn = async (appointmentId: string) => {
-    if (!workerId) return;
-    try {
-      const response = await fetch(`${API_URL}/timeclock/clock-in`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workerId, appointmentId }),
-      });
-      if (!response.ok) throw new Error("Failed to clock in");
-      const data = await response.json();
-      if (data.flaggedPreviousEntry) {
-        Alert.alert(
-          "Heads up",
-          "You had an open clock-in from a previous job that wasn't closed. It's been flagged for review."
-        );
+    if (!response.ok) throw new Error("Failed to clock out");
+
+    await fetchTimeclockStatus(workerId);
+
+    Alert.alert("Clocked Out", "Your open session has been closed.");
+  } catch (error) {
+    Alert.alert("Error", "Could not clock out.");
+  }
+};
+
+
+  
+const fetchDailyHours = async (currentWorkerId: string) => {
+  try {
+    const now = new Date();
+    const today = now.toISOString().split("T")[0];
+    const tzOffset = now.getTimezoneOffset();
+
+    const response = await fetch(
+      `${API_URL}/timeclock/daily/${currentWorkerId}?date=${today}&tzOffset=${tzOffset}`,
+      {
+        headers: await getAuthHeaders(false),
       }
-      await fetchTimeclockStatus(workerId);
-      await fetchDailyHours(workerId);
-    } catch (error) {
-      Alert.alert("Error", "Could not clock in to this job.");
-    }
-  };
+    );
 
-  const handleBreakStart = async () => {
-    if (!workerId) return;
-    try {
-      const response = await fetch(`${API_URL}/timeclock/break-start`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workerId }),
-      });
-      if (!response.ok) throw new Error("Failed to start break");
-      await fetchTimeclockStatus(workerId);
-      await fetchDailyHours(workerId);
-    } catch (error) {
-      Alert.alert("Error", "Could not start break.");
-    }
-  };
+    if (!response.ok) return;
 
-  const handleBreakEnd = async () => {
-    if (!workerId) return;
-    try {
-      const response = await fetch(`${API_URL}/timeclock/break-end`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workerId }),
-      });
-      if (!response.ok) throw new Error("Failed to end break");
-      await fetchTimeclockStatus(workerId);
-      await fetchDailyHours(workerId);
-    } catch (error) {
-      Alert.alert("Error", "Could not end break.");
-    }
-  };
+    const data = await response.json();
 
-  const handleJobClockOut = async () => {
-    if (!workerId) return;
-    try {
-      const response = await fetch(`${API_URL}/timeclock/clock-out`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workerId }),
-      });
-      if (!response.ok) throw new Error("Failed to clock out");
-      await fetchTimeclockStatus(workerId);
-      await fetchDailyHours(workerId);
-    } catch (error) {
-      Alert.alert("Error", "Could not clock out.");
+    const hours = Number(data?.totalHours ?? data?.dailyHours ?? data?.hours ?? 0);
+    setDailyHours(Number.isFinite(hours) ? hours : 0);
+  } catch (error) {
+    console.error("Daily hours fetch error:", error);
+  }
+};
+
+
+const handleJobClockIn = async (appointmentId: string) => {
+  if (!workerId) return;
+
+  try {
+    const response = await fetch(`${API_URL}/timeclock/clock-in`, {
+      method: "POST",
+      headers: await getAuthHeaders(),
+      body: JSON.stringify({ workerId, appointmentId }),
+    });
+
+    if (!response.ok) throw new Error("Failed to clock in");
+
+    const data = await response.json();
+
+    if (data.flaggedPreviousEntry) {
+      Alert.alert(
+        "Heads up",
+        "You had an open clock-in from a previous job that wasn't closed. It's been flagged for review."
+      );
     }
-  };
+
+    await fetchTimeclockStatus(workerId);
+    await fetchDailyHours(workerId);
+  } catch (error) {
+    Alert.alert("Error", "Could not clock in to this job.");
+  }
+};
+
+
+
+const handleBreakStart = async () => {
+  if (!workerId) return;
+
+  try {
+    const response = await fetch(`${API_URL}/timeclock/break-start`, {
+      method: "POST",
+      headers: await getAuthHeaders(),
+      body: JSON.stringify({ workerId }),
+    });
+
+    if (!response.ok) throw new Error("Failed to start break");
+
+    await fetchTimeclockStatus(workerId);
+    await fetchDailyHours(workerId);
+  } catch (error) {
+    Alert.alert("Error", "Could not start break.");
+  }
+};
+
+
+ 
+const handleBreakEnd = async () => {
+  if (!workerId) return;
+
+  try {
+    const response = await fetch(`${API_URL}/timeclock/break-end`, {
+      method: "POST",
+      headers: await getAuthHeaders(),
+      body: JSON.stringify({ workerId }),
+    });
+
+    if (!response.ok) throw new Error("Failed to end break");
+
+    await fetchTimeclockStatus(workerId);
+    await fetchDailyHours(workerId);
+  } catch (error) {
+    Alert.alert("Error", "Could not end break.");
+  }
+};
+
+  
+const handleJobClockOut = async () => {
+  if (!workerId) return;
+
+  try {
+    const response = await fetch(`${API_URL}/timeclock/clock-out`, {
+      method: "POST",
+      headers: await getAuthHeaders(),
+      body: JSON.stringify({ workerId }),
+    });
+
+    if (!response.ok) throw new Error("Failed to clock out");
+
+    await fetchTimeclockStatus(workerId);
+    await fetchDailyHours(workerId);
+  } catch (error) {
+    Alert.alert("Error", "Could not clock out.");
+  }
+};
+
 
   useEffect(() => {
     const initialize = async () => {
@@ -315,19 +414,21 @@ export default function WorkerDashboard() {
       const user = JSON.parse(userString);
 
       try {
-        const workersResponse = await fetch(`${API_URL}/workers`);
-        if (!workersResponse.ok) {
-          throw new Error("Failed to fetch workers");
-        }
+        
+const workerResponse = await fetch(`${API_URL}/workers/me`, {
+  headers: await getAuthHeaders(false),
+});
 
-        const allWorkers = await workersResponse.json();
-        const currentWorker = allWorkers.find((w: any) => w.email === user.email);
+if (!workerResponse.ok) {
+  const errorData = await workerResponse.json().catch(() => ({}));
+  throw new Error(
+    errorData.msg || "Failed to retrieve your worker profile."
+  );
+}
 
-        if (!currentWorker) {
-          Alert.alert("Error", "Could not find a worker profile for this user.");
-          return;
-        }
+const currentWorker = await workerResponse.json();
 
+      
         setWorkerProfile(currentWorker);
         setWorkerId(currentWorker._id);
         setName(currentWorker.name || "");
@@ -446,16 +547,18 @@ export default function WorkerDashboard() {
     }
   };
 
+ 
+
   const sendLocationToBackend = async (
     currentWorkerId: string,
     coords: Location.LocationObjectCoords
   ) => {
     if (!currentWorkerId) return;
-
+  
     try {
       await fetch(`${API_URL}/workers/${currentWorkerId}/update-location`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await getAuthHeaders(),
         body: JSON.stringify({
           latitude: coords.latitude,
           longitude: coords.longitude,
@@ -465,9 +568,11 @@ export default function WorkerDashboard() {
       console.error("Failed to send location to backend:", error);
     }
   };
+  
+  
 
   async function registerForPushNotificationsAsync(currentWorkerId: string) {
-    let token: string | undefined;
+    if (!currentWorkerId) return;
 
     if (Platform.OS === "android") {
       await Notifications.setNotificationChannelAsync("default", {
@@ -478,39 +583,29 @@ export default function WorkerDashboard() {
       });
     }
 
-    const { status: existingStatus } = await Notifications.getPermissionsAsync();
-    let finalStatus = existingStatus;
-
-    if (existingStatus !== "granted") {
-      const { status } = await Notifications.requestPermissionsAsync();
-      finalStatus = status;
-    }
-
-    if (finalStatus !== "granted") {
-      console.log("Failed to get push token!");
-      return;
-    }
-
     try {
-      const projectId = "feda72f0-f679-4d6c-8f9a-ff6184cd86eb";
-      token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
-      console.log("Worker Expo Push Token:", token);
-    } catch (e) {
-      console.error("Failed to get push token:", e);
-      return;
-    }
-
-    if (token) {
-      try {
-        await fetch(`${API_URL}/workers/save-push-token`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ workerId: currentWorkerId, token }),
-        });
-        console.log("Worker push token saved to backend.");
-      } catch (error) {
-        console.error("Failed to save worker push token:", error);
+      const { status: existingStatus } = await Notifications.getPermissionsAsync();
+      let finalStatus = existingStatus;
+      if (existingStatus !== "granted") {
+        const { status } = await Notifications.requestPermissionsAsync();
+        finalStatus = status;
       }
+      if (finalStatus !== "granted") {
+        console.log("Failed to get worker push notification permission.");
+        return;
+      }
+
+      const projectId = "feda72f0-f679-4d6c-8f9a-ff6184cd86eb";
+      const token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
+      const response = await fetch(`${API_URL}/workers/save-push-token`, {
+        method: "POST",
+        headers: await getAuthHeaders(),
+        body: JSON.stringify({ workerId: currentWorkerId, token }),
+      });
+      if (!response.ok) throw new Error("Failed to save worker push token");
+      console.log("Worker push token saved to backend.");
+    } catch (error) {
+      console.error("Worker push notification registration failed:", error);
     }
   }
 
@@ -530,11 +625,12 @@ export default function WorkerDashboard() {
     }
   };
 
+
   const handleSaveProfile = async () => {
     if (!workerId) return;
-
+  
     setIsSaving(true);
-
+  
     try {
       const updatedData: any = {
         name,
@@ -550,15 +646,15 @@ export default function WorkerDashboard() {
           : undefined,
         profileImageBase64: profileImage,
       };
-
+  
       const response = await fetch(`${API_URL}/workers/${workerId}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: await getAuthHeaders(),
         body: JSON.stringify(updatedData),
       });
-
+  
       if (!response.ok) throw new Error("Failed to save profile.");
-
+  
       Alert.alert("Success", "Your settings have been updated.");
       setSettingsModalVisible(false);
     } catch (error: any) {
@@ -567,6 +663,7 @@ export default function WorkerDashboard() {
       setIsSaving(false);
     }
   };
+  
 
   const handleClockToggle = async () => {
     if (!workerId) return;
@@ -582,6 +679,7 @@ export default function WorkerDashboard() {
     try {
       const response = await fetch(`${API_URL}/workers/${workerId}/${endpoint}`, {
         method: "POST",
+        headers: await getAuthHeaders(false),
       });
 
       if (!response.ok) throw new Error(`Failed to ${endpoint}`);
@@ -702,7 +800,7 @@ export default function WorkerDashboard() {
     try {
       const response = await fetch(`${API_URL}/appointments/${appointmentId}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: await getAuthHeaders(),
         body: JSON.stringify(payload),
       });
 
@@ -781,7 +879,7 @@ export default function WorkerDashboard() {
     try {
       const response = await fetch(`${API_URL}/chat/conversation/${job._id}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await getAuthHeaders(),
       });
 
       const data = await response.json().catch(() => ({}));
@@ -830,25 +928,26 @@ export default function WorkerDashboard() {
         onPress: async () => {
           if (workerId) {
             stopLocationTracking();
+  
             try {
               await fetch(`${API_URL}/workers/save-push-token`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: await getAuthHeaders(),
                 body: JSON.stringify({ workerId, token: null }),
               });
             } catch (e) {
               console.error("Failed to remove worker token on logout:", e);
             }
           }
-
-          await AsyncStorage.removeItem("user");
+  
+          await AsyncStorage.multiRemove(["user", "token"]);
           router.replace("/login");
         },
         style: "destructive",
       },
     ]);
   };
-
+  
   const getStatusColor = (status: string) => {
     switch (status?.toLowerCase()) {
       case "pending":
@@ -1402,11 +1501,15 @@ export default function WorkerDashboard() {
         </View>
 
         <View style={styles.headerIcons}>
-          {workerProfile?.isEmployer && (
-            <TouchableOpacity onPress={() => router.push("/worker/timesheets")}>
-              <Ionicons name="time-outline" size={26} color={colors.text} />
-            </TouchableOpacity>
-          )}
+        {workerProfile?.isEmployer && (
+  <TouchableOpacity
+    onPress={() => router.push("/worker/employer-jobs")}
+    style={{ padding: 4 }}
+    accessibilityLabel="Employer job management and timesheets"
+  >
+    <Ionicons name="time-outline" size={26} color={colors.text} />
+  </TouchableOpacity>
+)}
           <ThemeToggle />
           <TouchableOpacity onPress={handleLogout}>
             <Ionicons name="log-out-outline" size={28} color={colors.text} />
@@ -1772,464 +1875,92 @@ export default function WorkerDashboard() {
 }
 
 const styles = StyleSheet.create({
-  staleSessionBanner: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#fef3c7",
-    borderColor: "#f59e0b",
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: 12,
-    marginTop: 16,
-  },
-  staleSessionText: {
-    color: "#92400e",
-    fontSize: 13,
-    fontWeight: "600",
-  },
-  staleSessionButton: {
-    backgroundColor: "#f59e0b",
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    marginLeft: 8,
-  },
-  staleSessionButtonText: {
-    color: "#fff",
-    fontWeight: "700",
-    fontSize: 12,
-  },
-  container: { padding: 16, paddingBottom: 40 },
-
-  heroCard: {
-    borderRadius: 18,
-    borderWidth: 1,
-    padding: 16,
-    marginTop: 8,
-    marginBottom: 12,
-  },
-  headerBar: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  hammerButton: {
-    width: 46,
-    height: 46,
-    borderRadius: 14,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  hammerBadgeLarge: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  header: { fontSize: 24, fontWeight: "bold" },
-  heroSubText: { fontSize: 13, marginTop: 4 },
-  headerIcons: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 15,
-    marginLeft: 12,
-  },
-
-  quickInfoRow: {
-    flexDirection: "row",
-    gap: 10,
-    marginTop: 16,
-  },
-  quickInfoCard: {
-    flex: 1,
-    borderRadius: 14,
-    borderWidth: 1,
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-  },
-  quickInfoLabel: {
-    fontSize: 12,
-    marginBottom: 4,
-    fontWeight: "600",
-  },
-  quickInfoValue: {
-    fontSize: 15,
-    fontWeight: "700",
-  },
-
-  subHeader: { fontSize: 18, fontWeight: "600", marginTop: 24, marginBottom: 12 },
-
-  skillSelector: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    padding: 15,
-    borderRadius: 12,
-    borderWidth: 1,
-    marginBottom: 20,
-  },
-  skillSelectorText: { fontSize: 16, fontWeight: "600" },
-
-  profileSection: {
-    alignItems: "center",
-    padding: 20,
-    borderRadius: 12,
-    marginBottom: 20,
-  },
-  settingsProfileTop: {
-    alignItems: "center",
-    paddingVertical: 6,
-    marginBottom: 10,
-  },
-
-  avatar: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    borderWidth: 3,
-    borderColor: "#fff",
-  },
-  cameraIcon: {
-    position: "absolute",
-    bottom: 0,
-    right: 0,
-    backgroundColor: "rgba(0,0,0,0.6)",
-    padding: 8,
-    borderRadius: 15,
-  },
-  workerNameInput: {
-    marginTop: 15,
-    fontSize: 20,
-    fontWeight: "bold",
-    textAlign: "center",
-    borderBottomWidth: 1,
-    paddingBottom: 5,
-    width: "80%",
-  },
-
-  section: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginVertical: 8,
-    padding: 15,
-    borderRadius: 12,
-    borderWidth: 1,
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
-    shadowOffset: { width: 0, height: 1 },
-    elevation: 2,
-  },
-  label: { fontSize: 16, fontWeight: "500" },
-  inputLabel: {
-    fontSize: 14,
-    fontWeight: "500",
-    alignSelf: "flex-start",
-    marginBottom: 5,
-  },
-  clockButton: { paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8 },
-  clockText: { color: "white", fontWeight: "bold" },
-
-  settingsSectionTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    marginBottom: 10,
-    marginTop: 6,
-  },
-
-  detailsCard: { padding: 20, borderRadius: 12, marginBottom: 10 },
-  input: {
-    padding: 12,
-    borderRadius: 8,
-    fontSize: 16,
-    borderWidth: 1,
-    marginBottom: 15,
-    width: "100%",
-  },
-  genderContainer: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  genderButton: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-  },
-  distanceLabel: { fontSize: 16, fontWeight: "500", textAlign: "center", marginBottom: 10 },
+  addButton: { borderRadius: 10, paddingVertical: 11, paddingHorizontal: 14, alignItems: "center", justifyContent: "center", marginVertical: 4 },
+  addButtonText: {},
+  avatar: { width: 76, height: 76, borderRadius: 38 },
+  breakdownBox: { borderWidth: 1, borderRadius: 10, padding: 10, marginVertical: 8 },
+  breakdownInput: { borderWidth: 1, borderRadius: 8, padding: 10, minHeight: 42, flex: 1 },
+  breakdownItem: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 10 },
+  breakdownItemName: {},
+  breakdownItemPrice: {},
+  breakdownItemText: {},
+  breakdownRow: {},
+  breakdownTitle: {},
+  cameraIcon: { position: "absolute", right: 0, bottom: 0, backgroundColor: "#2563eb", borderRadius: 14, padding: 5 },
+  chatButton: { borderRadius: 10, paddingVertical: 11, paddingHorizontal: 14, alignItems: "center", justifyContent: "center", marginVertical: 4 },
+  chatButtonText: {},
+  clockButton: { borderRadius: 10, paddingVertical: 11, paddingHorizontal: 14, alignItems: "center", justifyContent: "center", marginVertical: 4 },
+  clockText: {},
+  container: { padding: 16, paddingBottom: 32 },
+  datePicker: {},
+  datePickerButton: { borderRadius: 10, paddingVertical: 11, paddingHorizontal: 14, alignItems: "center", justifyContent: "center", marginVertical: 4 },
+  datePickerButtonText: {},
+  dateTimeModalContent: { width: "100%", maxHeight: "90%", borderRadius: 18, padding: 18, alignSelf: "center", overflow: "hidden" },
+  detailsCard: { borderWidth: 1, borderRadius: 14, padding: 14, marginBottom: 14 },
+  distanceLabel: {},
+  genderButton: { borderRadius: 10, paddingVertical: 11, paddingHorizontal: 14, alignItems: "center", justifyContent: "center", marginVertical: 4 },
+  genderContainer: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 10 },
+  hammerBadgeLarge: {},
+  hammerButton: { borderRadius: 10, paddingVertical: 11, paddingHorizontal: 14, alignItems: "center", justifyContent: "center", marginVertical: 4 },
+  header: {},
+  headerBar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 10 },
+  headerIcons: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 10 },
+  heroCard: { borderWidth: 1, borderRadius: 14, padding: 14, marginBottom: 14 },
+  heroSubText: {},
+  input: { borderWidth: 1, borderRadius: 8, padding: 10, minHeight: 42, flex: 1 },
+  inputLabel: {},
+  iosPickerCard: { borderWidth: 1, borderRadius: 10, padding: 10, marginVertical: 8 },
+  jobAddress: {},
+  jobCard: { borderWidth: 1, borderRadius: 14, padding: 14, marginBottom: 14 },
+  jobDescription: {},
+  jobRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 10 },
+  jobStatus: {},
+  jobTime: {},
+  label: {},
+  loadingText: {},
+  map: { width: "100%", height: "100%" },
+  mapContainer: { height: 220, borderRadius: 14, overflow: "hidden", marginBottom: 18 },
+  mapLoading: { flex: 1, alignItems: "center", justifyContent: "center" },
+  modalActionButtons: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 10 },
+  modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", padding: 16 },
+  modalButton: { borderRadius: 10, paddingVertical: 11, paddingHorizontal: 14, alignItems: "center", justifyContent: "center", marginVertical: 4 },
+  modalContent: { width: "100%", maxHeight: "90%", borderRadius: 18, padding: 18, alignSelf: "center", overflow: "hidden" },
+  modalOption: {},
+  modalOptionText: {},
+  modalSubtitle: {},
+  modalTitle: {},
+  quickInfoCard: { borderWidth: 1, borderRadius: 14, padding: 14, marginBottom: 14 },
+  quickInfoLabel: {},
+  quickInfoRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 10 },
+  quickInfoValue: {},
+  removeButton: {},
+  saveButton: { borderRadius: 10, paddingVertical: 11, paddingHorizontal: 14, alignItems: "center", justifyContent: "center", marginVertical: 4 },
+  saveButtonText: {},
+  section: { borderWidth: 1, borderRadius: 14, padding: 14, marginBottom: 14 },
+  settingsHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 10 },
+  settingsProfileTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 10 },
+  settingsSectionTitle: {},
+  settingsSheet: { width: "100%", maxHeight: "90%", borderRadius: 18, padding: 18, alignSelf: "center", overflow: "hidden" },
+  settingsSubtitle: {},
+  settingsTitle: {},
+  skillSelector: { borderRadius: 10, paddingVertical: 11, paddingHorizontal: 14, alignItems: "center", justifyContent: "center", marginVertical: 4 },
+  skillSelectorText: {},
   slider: { width: "100%", height: 40 },
-
-  saveButton: {
-    padding: 16,
-    borderRadius: 12,
-    alignItems: "center",
-    marginTop: 20,
-    marginHorizontal: 10,
-  },
-  saveButtonText: { color: "white", fontSize: 16, fontWeight: "bold" },
-
-  mapContainer: {
-    width: "100%",
-    height: 250,
-    borderRadius: 14,
-    marginBottom: 20,
-    overflow: "hidden",
-    backgroundColor: "#f0f0f0",
-  },
-  map: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  mapLoading: {
-    ...StyleSheet.absoluteFillObject,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  loadingText: { textAlign: "center", fontStyle: "italic", paddingVertical: 30 },
-
-  jobCard: {
-    borderRadius: 12,
-    padding: 15,
-    marginVertical: 6,
-    borderWidth: 1,
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
-    shadowOffset: { width: 0, height: 1 },
-    elevation: 2,
-  },
-  jobRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 4,
-  },
-  jobTime: { fontSize: 16, fontWeight: "700" },
-  jobAddress: { fontSize: 14, marginVertical: 2 },
-  jobDescription: { fontSize: 12, fontStyle: "italic", marginVertical: 4 },
-  jobStatus: { fontSize: 14, fontWeight: "600", textTransform: "capitalize" },
-  statusActions: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-    marginTop: 10,
-    gap: 10,
-    flexWrap: "wrap",
-  },
-  statusButton: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    alignItems: "center",
-  },
-  statusButtonText: { color: "white", fontWeight: "bold" },
-
-  modalBackdrop: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "rgba(0,0,0,0.5)",
-  },
-  modalContent: {
-    width: "90%",
-    maxHeight: "70%",
-    borderRadius: 20,
-    padding: 20,
-    overflow: "hidden",
-  },
-  settingsSheet: {
-    width: "92%",
-    maxWidth: 460,
-    maxHeight: "88%",
-    borderRadius: 20,
-    padding: 18,
-  },
-  settingsHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 14,
-  },
-  settingsTitle: {
-    fontSize: 22,
-    fontWeight: "800",
-  },
-  settingsSubtitle: {
-    fontSize: 13,
-    marginTop: 2,
-  },
-
-  dateTimeModalContent: {
-    width: "90%",
-    maxWidth: 400,
-    maxHeight: "85%",
-    borderRadius: 12,
-    padding: 20,
-    alignItems: "center",
-  },
-  datePicker: { width: "100%" },
-  iosPickerCard: {
-    width: "100%",
-    borderRadius: 12,
-    padding: 10,
-    borderWidth: 1,
-    marginTop: 10,
-  },
-  datePickerButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingVertical: 12,
-    paddingHorizontal: 15,
-    marginBottom: 10,
-  },
-  datePickerButtonText: {
-    fontSize: 16,
-    fontWeight: "600",
-    marginLeft: 10,
-  },
-  modalSubtitle: { fontSize: 14, textAlign: "center" },
-  modalActionButtons: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    width: "100%",
-    marginTop: 20,
-    gap: 10,
-  },
-  modalButton: {
-    flex: 1,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    alignItems: "center",
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: "bold",
-    textAlign: "center",
-    marginBottom: 20,
-  },
-  modalOption: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingVertical: 15,
-    borderBottomWidth: 1,
-  },
-  modalOptionText: { fontSize: 16 },
-
-  breakdownItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 8,
-  },
-  breakdownInput: {
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    fontSize: 14,
-    borderWidth: 1,
-  },
-  breakdownItemName: {
-    flex: 3,
-    marginRight: 8,
-  },
-  breakdownItemPrice: {
-    flex: 1.5,
-    marginRight: 8,
-  },
-  removeButton: {
-    padding: 4,
-  },
-  addButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderStyle: "dashed",
-    marginTop: 5,
-  },
-  addButtonText: {
-    marginLeft: 5,
-    fontSize: 14,
-    fontWeight: "600",
-  },
-  totalContainer: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginTop: 15,
-    paddingTop: 15,
-    borderTopWidth: 1,
-    borderColor: "#e0e0e0",
-  },
-  totalText: {
-    fontSize: 18,
-    fontWeight: "500",
-  },
-  totalAmount: {
-    fontSize: 18,
-    fontWeight: "bold",
-  },
-  breakdownBox: {
-    marginTop: 10,
-    padding: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-  },
-  breakdownTitle: {
-    fontSize: 14,
-    fontWeight: "bold",
-    marginBottom: 5,
-  },
-  breakdownRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    paddingVertical: 2,
-  },
-  breakdownItemText: {
-    fontSize: 14,
-  },
-  chatButton: {
-    marginTop: 12,
-    alignSelf: "flex-start",
-    borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-  },
-  chatButtonText: {
-    color: "#fff",
-    fontWeight: "700",
-    fontSize: 14,
-  },
-  unreadBadge: {
-    marginLeft: 8,
-    minWidth: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: "#ef4444",
-    justifyContent: "center",
-    alignItems: "center",
-    paddingHorizontal: 6,
-  },
-  unreadBadgeText: {
-    color: "#fff",
-    fontSize: 11,
-    fontWeight: "700",
-  },
-  timeclockRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-    marginTop: 10,
-  },
-  timeclockButton: {
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 8,
-  },
-  timeclockButtonText: {
-    color: "#fff",
-    fontWeight: "700",
-    fontSize: 13,
-  },
+  staleSessionBanner: { flexDirection: "row", alignItems: "center", padding: 12, borderRadius: 10, backgroundColor: "#fef3c7", marginBottom: 14 },
+  staleSessionButton: { borderRadius: 10, paddingVertical: 11, paddingHorizontal: 14, alignItems: "center", justifyContent: "center", marginVertical: 4 },
+  staleSessionButtonText: {},
+  staleSessionText: {},
+  statusActions: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 10 },
+  statusButton: { borderRadius: 10, paddingVertical: 11, paddingHorizontal: 14, alignItems: "center", justifyContent: "center", marginVertical: 4 },
+  statusButtonText: {},
+  subHeader: {},
+  timeclockButton: { borderRadius: 10, paddingVertical: 11, paddingHorizontal: 14, alignItems: "center", justifyContent: "center", marginVertical: 4 },
+  timeclockButtonText: {},
+  timeclockRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 10 },
+  totalAmount: {},
+  totalContainer: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 10 },
+  totalText: {},
+  unreadBadge: { marginLeft: 8, backgroundColor: "#dc2626", borderRadius: 10, paddingHorizontal: 6, paddingVertical: 2 },
+  unreadBadgeText: {},
+  workerNameInput: { borderWidth: 1, borderRadius: 8, padding: 10, minHeight: 42, flex: 1 },
 });
