@@ -218,11 +218,12 @@ router.post("/", requireAuth, async (req, res) => {
   }
 });
 
-// --------------------------------------------------
-// POST /workers/save-push-token
-// Save a push notification token for the owner's profile.
-// Expected body: { workerId, token }
-// --------------------------------------------------
+
+/*
+ * POST /workers/save-push-token
+ * Save a push notification token for the owner's profile.
+ * Expected body: { workerId, token }
+ */
 router.post(
   "/save-push-token",
   requireAuth,
@@ -237,14 +238,40 @@ router.post(
         typeof token !== "string"
       ) {
         return res.status(400).json({
+          success: false,
           msg: "The push token must be a string or null.",
         });
       }
 
-      req.worker.expoPushToken =
-        typeof token === "string" && token.trim() ? token.trim() : null;
+      const normalizedToken =
+        typeof token === "string" && token.trim()
+          ? token.trim()
+          : null;
 
-      await req.worker.save();
+      // Update only the push token. Do not validate or overwrite
+      // unrelated profile fields such as gender.
+      const updatedWorker = await Worker.findOneAndUpdate(
+        {
+          _id: req.worker._id,
+          authId: req.user._id,
+        },
+        {
+          $set: {
+            expoPushToken: normalizedToken,
+          },
+        },
+        {
+          new: true,
+          runValidators: true,
+        }
+      ).select("_id");
+
+      if (!updatedWorker) {
+        return res.status(404).json({
+          success: false,
+          msg: "Worker profile not found for this account.",
+        });
+      }
 
       return res.status(200).json({
         success: true,
@@ -260,6 +287,7 @@ router.post(
     }
   }
 );
+
 
 // --------------------------------------------------
 // GET /workers/me
